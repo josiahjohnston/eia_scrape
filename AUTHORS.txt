@@ -1,0 +1,9 @@
+# Names of individuals and organizations should be added to this list in
+# alphabetical order. Relative contributions of individuals can be tracked via
+# git history.
+
+# Individuals
+Josiah Johnston
+
+# Organizations
+University of California Berkeley

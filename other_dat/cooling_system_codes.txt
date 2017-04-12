@@ -1,0 +1,13 @@
+Cooling System Type Code	Cooling System Type Description
+DC	Dry (air) cooling system
+HRC	Hybrid: cooling pond(s) or canal(s) with dry cooling
+HRF	Hybrid: forced draft cooling tower(s) with dry cooling
+HRI	Hybrid: induced draft cooling tower(s) with dry cooling
+OC	Once through with cooling pond(s)
+ON	Once through without cooling pond(s)
+RC	Recirculating with cooling pond(s) or canal(s)
+RF	Recirculating with forced draft cooling tower(s)
+RI	Recirculating with induced draft cooling tower(s)
+RN	Recirculating with natural draft cooling tower(s)
+HT	Helper Tower
+OT	Other (specify in SCHEDULE 7)

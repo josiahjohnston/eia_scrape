@@ -1,0 +1,5 @@
+Cooling Water Source Code	Cooling Water Source Description
+SW	Surface Water (ex: river, canal, bay)
+GW	Ground Water (ex: aquifer, well)
+PD	Plant Discharge Water (ex: wastewater treatment plant discharge)
+OT	Other (specify in SCHEDULE 7)

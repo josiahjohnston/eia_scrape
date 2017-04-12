@@ -1,0 +1,7 @@
+Tower Type Code	Tower Type Description
+MD	Mechanical draft, dry process
+MW	Mechanical draft, wet process
+ND	Natural draft, dry process
+NW	Natural draft, wet process
+WD	Combination wet and dry processes
+OT	Other (specify in SCHEDULE 7)

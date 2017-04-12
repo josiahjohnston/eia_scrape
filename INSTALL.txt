@@ -1,0 +1,42 @@
+# To do: implement a setup.py script so these instructions will work
+# Move package code into a subdirectory
+# Define a console entry point for scrape.py
+# Review these instructions and make sure they make sense & work
+
+INSTALLATION
+1. Open either a terminal or Anaconda command prompt (Start -> Anaconda ->
+   Anaconda Prompt)
+2. Paste this command into the command prompt to clone a copy of the repository:
+       git clone [github url here] [path to project directory]
+   Using git clone instead of downloading a zip file will let you track any
+   local changes you make to the code, and will make it easier to retrieve
+   software updates as needed.
+3. Navigate to your project directory.
+4. Create a virtual environment to isolate this project's python software 
+   from other versions that may be installed on the computer. Software 
+   requirements and compatibilities change over time, sometimes in incompatible
+   ways. Using virtual environments to encapsulate each project's customized 
+   software allows active and archived projects to coexist on a single computer.
+       pip install virtualenv
+       virtualenv venv
+       source venv/bin/activate
+5. Install this package and its python prerequisites in this virtual environment.
+       pip install --editable .
+6. Record the exact version of every library you are using so you can 
+   precisely replicate this setup in the future. 
+       pip freeze > requirements.txt
+   Without this step, you are at higher risk of not being able to readily
+   repeat or extend this analysis, especially if future releases of libraries
+   are not completely backwards compatible (this has happened a few times in
+   the past few years).
+
+
+EXECUTION
+1. Open either a terminal or Anaconda command prompt (Start -> Anaconda ->
+   Anaconda Prompt) and navigate to your project directory.
+2. Activate your virtual environment with the following command:
+       source venv/bin/activate
+3. Execute
+       # Insert relevant command after registering a console entry point with
+       # setup.py
+

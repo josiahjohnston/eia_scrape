@@ -1,0 +1,42 @@
+Fuel Type	Energy Source Code	Unit Label	Higher Heating Value Range MMBtu Lower	Higher Heating Value Range MMBtu Upper	Energy Source Description
+Coal	ANT	Tons	22	28	Anthracite Coal
+Coal	BIT	Tons	20	29	Bituminous Coal
+Coal	LIG	Tons	10	14.5	Lignite Coal
+Coal	SGC	Mcf	0.2	0.3	Coal-Derived Synthesis Gas
+Coal	SUB	Tons	15	20	Subbituminous Coal
+Coal	WC	tons	6.5	16	Waste/Other Coal (incl. anthracite culm, bituminous gob, fine coal, lignite waste, waste coal)
+Coal	RC	tons	20	29	Refined Coal
+Petroleum Products	DFO	barrels	5.5	6.2	Distillate Fuel Oil (including diesel, No. 1, No. 2, and No. 4 fuel oils)
+Petroleum Products	JF	barrels	5	6	Jet Fuel
+Petroleum Products	KER	barrels	5.6	6.1	Kerosene
+Petroleum Products	PC	tons	24	30	Petroleum Coke
+Petroleum Products	PG	Mcf	2.5	2.75	Gaseous Propane
+Petroleum Products	RFO	barrels	5.8	6.8	Residual Fuel Oil (incl. Nos. 5 & 6 fuel oils, and bunker C fuel oil)
+Petroleum Products	SGP	Mcf	0.2	1.1	Synthesis Gas from Petroleum Coke
+Petroleum Products	WO	barrels	3	5.8	"Waste/Other Oil (including crude oil, liquid butane, liquid propane, naphtha, oil waste, re-refined
+motor oil, sludge oil, tar oil, or other petroleum-based liquid wastes)"
+Natural Gas and Other Gases	BFG	Mcf	0.07	0.12	Blast Furnace Gas
+Natural Gas and Other Gases	NG	Mcf	0.8	1.1	Natural Gas
+Natural Gas and Other Gases	OG	Mcf	0.32	3.3	Other Gas (specify in SCHEDULE 7)
+Solid Renewable Fuels	AB	tons	7	18	Agricultural By-Products
+Solid Renewable Fuels	MSW	tons	9	12	Municipal Solid Waste
+Solid Renewable Fuels	OBS	tons	8	25	Other Biomass Solids (specify in SCHEDULE 7)
+Solid Renewable Fuels	WDS	tons	7	18	Wood/Wood Waste Solids (incl. paper pellets, railroad ties, utility poles, wood chips, bark, and wood waste solids)
+Liquid Renewable (Biomass) Fuels	OBL	barrels	3.5	4	Other Biomass Liquids (specify in SCHEDULE 7)
+Liquid Renewable (Biomass) Fuels	SLW	tons	10	16	Sludge Waste
+Liquid Renewable (Biomass) Fuels	BLQ	tons	10	14	Black Liquor
+Liquid Renewable (Biomass) Fuels	WDL	barrels	8	14	Wood Waste Liquids excluding Black Liquor (including red liquor, sludge wood, spent sulfite liquor, and other wood-based liquids)
+Gaseous Renewable (Biomass) Fuels	LFG	Mcf	0.3	0.6	Landfill Gas
+Gaseous Renewable (Biomass) Fuels	OBG	Mcf	0.36	1.6	Other Biomass Gas (including digester gas, methane, and other biomass gases; specify in SCHEDULE 7)
+All Other Renewable Fuels	SUN	N/A	N/A	N/A	Solar
+All Other Renewable Fuels	WND	N/A	N/A	N/A	Wind
+All Other Renewable Fuels	GEO	N/A	N/A	N/A	Geothermal
+All Other Renewable Fuels	WAT	N/A	N/A	N/A	"Water at a Conventional Hydroelectric Turbine, and water used in Wave Buoy Hydrokinetic
+Technology, Current Hydrokinetic Technology, and Tidal Hydrokinetic Technology"
+All Other Energy Sources	WAT	MWh	N/A	N/A	Pumping Energy for Reversible (Pumped Storage) Hydroelectric Turbine
+All Other Energy Sources	NUC	N/A	N/A	N/A	Nuclear (including Uranium, Plutonium, and Thorium)
+All Other Energy Sources	PUR	N/A	N/A	N/A	Purchased Steam
+All Other Energy Sources	WH	N/A	N/A	N/A	Waste heat not directly attributed to a fuel source (WH should only be reported when the fuel source is undetermined, and for combined cycle steam turbines that do not have supplemental firing.)
+All Other Energy Sources	TDF	Tons	16	32	Tire-derived Fuels
+All Other Energy Sources	MWH	MWh	N/A	N/A	Electricity used for energy storage
+All Other Energy Sources	OTH	N/A	N/A	N/A	Specify in SCHEDULE 7

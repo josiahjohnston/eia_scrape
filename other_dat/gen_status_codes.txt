@@ -1,0 +1,43 @@
+"Generator Status Code"	"Generator Status Code Description"
+OP	"Operating - in service (commercial operation) and producing some
+electricity. Includes peaking units that are run on an as needed
+(intermittent or seasonal) basis."
+SB	"Standby/Backup - available for service but not normally used (has
+little or no generation during the year) for this reporting period."
+OS	"Out of service - was not used for some or all of the reporting
+period and is NOT expected to be returned to service in the next
+calendar year."
+OA	"Out of service - was not used for some or all of the reporting
+periodbutisexpectedtobereturnedtoserviceinthenext
+calendar year."
+RE	"Retired - no longer in service and not expected to be returned to
+service."
+IP	"Planned new generator canceled, indefinitely postponed, or no
+longer in resource plan"
+TS	"Construction complete, but not yet in commercial operation
+(including low power testing of nuclear units)"
+P	"Planned for installation but regulatory approvals not initiated;
+Not under construction"
+L	"Regulatory approvals pending. Not under construction but site
+preparation could be underway"
+T	"Regulatory approvals received. Not under construction but site
+preparation could be underway"
+U	"Under construction, less than or equal to 50 percent complete
+(based on construction time to date of operation)"
+V	"Under construction, more than 50 percent complete (based on
+construction time to date of operation)"
+OT	"Other (specify in SCHEDULE 7)"
+CN	Cancelled (previously reported as planned)
+CO	New unit under construction
+OP	"Operating (in commercial service or out of service less than 365
+days)"
+OS	"Out of service (365 days or longer)"
+OZ	"Operated only during the ozone season (May through September)"
+PL	"Planned (expected to go into commercial service within 10 years)"
+RE	"Retired (no longer in service and not expected to be returned to
+service)"
+SB	"Standby (or inactive reserve); i.e., not normally used, but available
+for service"
+SC	"Cold Standby (Reserve); deactivated (usually requires 3 to 6 months
+to reactivate)"
+TS	"Operating under test conditions (not in commercial service)"

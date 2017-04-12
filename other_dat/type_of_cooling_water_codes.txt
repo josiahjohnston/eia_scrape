@@ -1,0 +1,6 @@
+Type of Cooling Water Code	Type of Cooling Water Description
+BR	Brackish Water
+FR	Fresh Water
+BE	Reclaimed Water (ex: treated wastewater effluent)
+SA	Saline Water
+OT	Other (specify in SCHEDULE 7)
