@@ -42,3 +42,5 @@ def unzip(file_list):
             zip_ref = zipfile.ZipFile(path, 'r')
             zip_ref.extractall(unzip_name)
             zip_ref.close()
+        else:
+            print "Skipping "+unzip_name+" because it was already unzipped."

@@ -5,38 +5,59 @@ Scrape data on existing and planned generators in the United States from the
 Energy Information Agency's data portal. Start with form EIA-860 which has
 plant- and unit-level technology, location and various characteristics.
 
+Enables successively aggregating the data by multiple lists of columns.
+
 Done:
 Download files, log and unzip
 
-To Do: 
+To Do:
+Assign proposed plants to NERC regions
 Complete investigation of files (1/2 done)
-Parse files, aggregate and export
 Determine if code for scraping the next datasets needs to live here or if it
 can live in other files.
 QA/QC on output
+
+Assumptions:
+Only single fuels are considered
+Ignoring uprates and downrates
+Taking the 'max' value of each column that is not summed in the aggregation process
 
 """
 
 import csv
 import os
+import numpy as np
 import pandas as pd
 
 # Update the reference to the utils module after this becomes a package
 from utils import download_file, download_metadata_fields, unzip
 
-output_directory = "downloads"
-log_path = os.path.join(output_directory, 'download_log.csv')
+unzip_directory = 'downloads'
+outputs_directory = 'processed_data'
+log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
+start_year, end_year = 2001, 2015
+gen_relevant_data = ['Plant Code', 'Plant Name', 'Generator ID', 'Technology',
+    'Prime Mover', 'Unit Code', 'Nameplate Capacity (MW)',
+    'Summer Capacity (MW)', 'Winter Capacity (MW)', 'Minimum Load (MW)',
+    'Operating Year', 'Planned Retirement Year', 'Energy Source 1',
+    'Time from Cold Shutdown to Full Load', 'Carbon Capture Technology?',
+    'Latitude', 'Longitude', 'Balancing Authority Name', 'Grid Voltage (kV)',
+    'Operational Status']
+gen_data_to_be_summed = ['Nameplate Capacity (MW)', 'Summer Capacity (MW)',
+                        'Winter Capacity (MW)', 'Minimum Load (MW)']
+gen_aggregation_lists = [['Plant Code','Unit Code'],
+                    ['Plant Code', 'Prime Mover', 'Energy Source 1',
+                        'Operating Year']]
 
 
 def scrape_eia860():
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
+    if not os.path.exists(unzip_directory):
+        os.makedirs(unzip_directory)
     log_dat = []
-    start_year, end_year = 2001, 2015
     file_list = ['eia860{}.zip'.format(year) for year in range(start_year, end_year+1)]
     for filename in file_list:
-        local_path = os.path.join(output_directory, filename)
+        local_path = os.path.join(unzip_directory, filename)
         if REUSE_PRIOR_DOWNLOADS and os.path.isfile(local_path):
             print "Skipping " + filename + " because it was already downloaded."
             continue
@@ -54,7 +75,7 @@ def scrape_eia860():
             logwriter.writerow(download_metadata_fields)
         logwriter.writerows(log_dat)
     
-    return file_list
+    return [os.path.join(unzip_directory, f) for f in file_list]
 
 
 def main():
@@ -62,22 +83,72 @@ def main():
     # Only unzip the last year of generator listings for now.
     # Note, the file listings/data structures are different prior to 2013.
     unzip([file_list[-1]])
+    parse_dat([os.path.splitext(file_list[-1])[0]])
 
 
-def parse_dat():
-    path = 'eia8602015/2___Plant_Y2015.xlsx'
-    plants = pd.read_excel(path, sheetname=0, skiprows=1)
-    plants.set_index('Plant Code')
+def parse_dat(directory_list):
+    for directory in directory_list:
+        year = directory[-4:]
+        print "============================="
+        print "Processing data for year {}.".format(year)
 
-    path = 'eia8602015/3_1_Generator_Y2015.xlsx'
-    generators_raw = pd.read_excel(path, sheetname=None, skiprows=1)
-    for sheet in generators_raw.keys():
-        generators_raw[sheet]['Operational Status'] = sheet
-    generators = generators_raw[u'Operable']
-    generators.append(generators_raw[u'Proposed'])
-    generators = pd.merge(generators, plants, 
-        on=['Utility ID', 'Utility Name', 'Plant Code', 'Plant Name', 'State', 'County', 'Sector', 'Sector Name'],
-        suffixes=('', ''))
+        for f in os.listdir(directory):
+            # Avoid trying to read a temporal file is any Excel workbook is open
+            if 'Plant' in f and '~' not in f:
+                path = os.path.join(directory, f)
+                plants = pd.read_excel(path, sheetname=0, skiprows=1)
+            if 'Generator' in f and '~' not in f:
+                path = os.path.join(directory, f)
+                generators_raw = pd.read_excel(path, sheetname=None, skiprows=1)
+        
+        for sheet in generators_raw.keys():
+            generators_raw[sheet]['Operational Status'] = sheet
+        generators = pd.merge(generators_raw[u'Operable'], plants,
+            on=['Utility ID', 'Utility Name', 'Plant Code', 'Plant Name', 'State',
+            'County', 'Sector', 'Sector Name'], suffixes=('', ''))
+        generators = generators.append(generators_raw[u'Proposed'])
+
+        print "Read in data for {} existing and {} proposed generation units in "\
+            "the US.".format(len(generators[generators['Operational Status']=='Operable']),
+            len(generators[generators['Operational Status']=='Proposed']))
+
+        # Filter to units in the WECC region
+        generators = generators[generators['NERC Region']=='WECC'][gen_relevant_data]
+        generators.reset_index(drop=True, inplace=True)
+        print "Filtered to {} existing and {} proposed generation units in the WECC "\
+            "region.".format(len(generators[generators['Operational Status']=='Operable']),
+            len(generators[generators['Operational Status']=='Proposed']))
+
+        # Prepare numeric columns
+        for col in gen_data_to_be_summed:
+            generators[col].replace(' ', 0, inplace=True)
+
+        # Aggregate according to user criteria
+        for agg_list in gen_aggregation_lists:
+            for col in agg_list:
+                if generators[col].dtype == np.float64:
+                    generators[col].fillna(
+                        {i:10000000+i for i in generators.index}, inplace=True)
+                else:
+                    generators[col].fillna(
+                        {i:'None'+str(i) for i in generators.index}, inplace=True)
+            gb = generators.groupby(agg_list)
+            generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                                for datum in gen_relevant_data})
+            generators.reset_index(drop=True, inplace=True)
+            print "Filtered to {} existing and {} new generation units by aggregating "\
+                "through {}.".format(len(generators[generators['Operational Status']=='Operable']),
+                len(generators[generators['Operational Status']=='Proposed']), agg_list)
+        generators = generators.astype(
+            {c: int for c in ['Operating Year', 'Plant Code']})
+        
+        if not os.path.exists(outputs_directory):
+            os.makedirs(outputs_directory)
+        fname = 'generation_projects_{}.tab'.format(year)
+        with open(os.path.join(outputs_directory, fname),'w') as f:
+            generators.to_csv(f, sep='\t')
+        print "Saved data to {} file.".format(fname)
+
 
     # Group by Plant, Technology, Unit Code
     # 'Plant Code', 'Technology', 'Unit Code'
