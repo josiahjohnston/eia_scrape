@@ -1,15 +1,20 @@
 # Copyright 2017. All rights reserved. See AUTHORS.txt
 # Licensed under the Apache License, Version 2.0 which is in LICENSE.txt
+"""
+Utilities to scrape data from URLs and databases.
 
-# Utility for robustly downloading a file and returning metadata
-# Adapted from http://stackoverflow.com/questions/16694907/how-to-download-large-file-in-python-with-requests-py
+File download function adapted from
+http://stackoverflow.com/questions/16694907/how-to-download-large-file-in-python-with-requests-py
 
+"""
 
 import datetime
-import requests
+import getpass
 import hashlib
-import zipfile
 import os
+import psycopg2
+import requests
+import zipfile
 
 download_metadata_fields = ('filename', 'url', 'download_timestamp_utc', 'sha1')
 # A standard size for chunking data for disk writes: 64kb = 2^16 = 65536
@@ -17,8 +22,8 @@ BLOCKSIZE = 65536
 
 def download_file(url, local_path):
     """
-    Download the contents of a url to a local file, and plays nice with
-    large files. Return metadata suitable for a log file:
+    Robustly download the contents of a url to a local file.
+    Return metadata suitable for a log file:
         (local_path, url, timestamp, sha1_hash)
     See also: download_metadata_fields
     """
@@ -44,3 +49,36 @@ def unzip(file_list):
             zip_ref.close()
         else:
             print "Skipping "+unzip_name+" because it was already unzipped."
+
+
+def connect_to_db_and_run_query(query, database='postgres', host='localhost', port=5433):
+    user = getpass.getpass('Enter username for database {}:'.format(database))
+    password = getpass.getpass('Enter database password for user {}:'.format(user))
+    try:
+        con = psycopg2.connect(database=database, user=user, host=host,
+            port=port, password=password)
+        print "Connection to database established..."
+    except:
+        sys.exit("Error connecting to database {} at host {}:{}.".format(database,host,port))
+
+    cur = con.cursor()
+    try:
+        cur.execute(query)
+        # fetchall() returns a list of tuples with the rows resulting from the query
+        output = cur.fetchall()
+        if cur:
+            cur.close()
+        if con:
+            con.close()
+            print 'Successfully executed query: returning results.'
+            print 'Closed database connection.'
+        return output
+    except:
+        if cur:
+            cur.close()
+        if con:
+            con.close()
+            print 'Query execution failed.'
+            print 'Closed database connection.'
+        return None
+    

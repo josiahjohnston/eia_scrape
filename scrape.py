@@ -30,9 +30,10 @@ import numpy as np
 import pandas as pd
 
 # Update the reference to the utils module after this becomes a package
-from utils import download_file, download_metadata_fields, unzip
+from utils import download_file, download_metadata_fields, unzip, connect_to_db_and_run_query
 
 unzip_directory = 'downloads'
+other_data_directory = 'other_dat'
 outputs_directory = 'processed_data'
 log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
@@ -49,6 +50,14 @@ gen_data_to_be_summed = ['Nameplate Capacity (MW)', 'Summer Capacity (MW)',
 gen_aggregation_lists = [['Plant Code','Unit Code'],
                     ['Plant Code', 'Prime Mover', 'Energy Source 1',
                         'Operating Year']]
+
+
+def main():
+    file_list = scrape_eia860()
+    # Only unzip the last year of generator listings for now.
+    # Note, the file listings/data structures are different prior to 2013.
+    unzip([file_list[-1]])
+    parse_dat([os.path.splitext(file_list[-1])[0]])
 
 
 def scrape_eia860():
@@ -78,14 +87,6 @@ def scrape_eia860():
     return [os.path.join(unzip_directory, f) for f in file_list]
 
 
-def main():
-    file_list = scrape_eia860()
-    # Only unzip the last year of generator listings for now.
-    # Note, the file listings/data structures are different prior to 2013.
-    unzip([file_list[-1]])
-    parse_dat([os.path.splitext(file_list[-1])[0]])
-
-
 def parse_dat(directory_list):
     for directory in directory_list:
         year = directory[-4:]
@@ -100,18 +101,28 @@ def parse_dat(directory_list):
             if 'Generator' in f and '~' not in f:
                 path = os.path.join(directory, f)
                 generators_raw = pd.read_excel(path, sheetname=None, skiprows=1)
-        
+
         for sheet in generators_raw.keys():
             generators_raw[sheet]['Operational Status'] = sheet
         generators = pd.merge(generators_raw[u'Operable'], plants,
             on=['Utility ID', 'Utility Name', 'Plant Code', 'Plant Name', 'State',
             'County', 'Sector', 'Sector Name'], suffixes=('', ''))
-        generators = generators.append(generators_raw[u'Proposed'])
+        generators = generators.append(generators_raw[u'Proposed'].rename(
+            columns={'Current Year':'Operating Year'}))
 
         print "Read in data for {} existing and {} proposed generation units in "\
             "the US.".format(len(generators[generators['Operational Status']=='Operable']),
             len(generators[generators['Operational Status']=='Proposed']))
 
+        # Assign proposed projects to WECC region according to county
+        county_list_path = os.path.join(other_data_directory, 'wecc_counties.txt')
+        if not os.path.exists(county_list_path):
+            print "Database will be queried to obtain list of counties that belong to WECC."
+            assign_counties_to_region()
+        county_list = pd.read_csv(county_list_path, header=None)[0].values
+        generators.loc[(generators['Operational Status']=='Proposed') & 
+            (generators['County'].isin(county_list)), 'NERC Region'] = 'WECC'
+        
         # Filter to units in the WECC region
         generators = generators[generators['NERC Region']=='WECC'][gen_relevant_data]
         generators.reset_index(drop=True, inplace=True)
@@ -149,6 +160,18 @@ def parse_dat(directory_list):
             generators.to_csv(f, sep='\t')
         print "Saved data to {} file.".format(fname)
 
+
+def assign_counties_to_region():
+    # assign county if 50% or more of its area falls in the WECC region
+    query = "SELECT name \
+             FROM ventyx_nerc_reg_region regions CROSS JOIN us_counties counties \
+             WHERE regions.gid=13 AND \
+             ST_Area(ST_Intersection(counties.the_geom, regions.the_geom))/ST_Area(counties.the_geom)>=0.5"
+    wecc_counties = pd.DataFrame(connect_to_db_and_run_query(query=query, database='switch_gis'))
+    file_path = os.path.join(other_data_directory, 'wecc_counties.txt')
+    with open(file_path, 'w') as f:
+        wecc_counties.to_csv(f, header=False, index=False)
+    print "Saved list of counties assigned to WECC in {}".format(file_path)
 
     # Group by Plant, Technology, Unit Code
     # 'Plant Code', 'Technology', 'Unit Code'
