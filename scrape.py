@@ -18,9 +18,10 @@ can live in other files.
 QA/QC on output
 
 Assumptions:
-Only single fuels are considered
-Ignoring uprates and downrates
+Only single fuels are considered.
+Ignoring uprates and downrates.
 Taking the 'max' value of each column that is not summed in the aggregation process
+of generation projects.
 
 """
 
@@ -37,27 +38,48 @@ other_data_directory = 'other_dat'
 outputs_directory = 'processed_data'
 log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
-start_year, end_year = 2001, 2015
-gen_relevant_data = ['Plant Code', 'Plant Name', 'Generator ID', 'Technology',
+CLEAR_PRIOR_OUTPUTS = False
+start_year, end_year = 2013, 2015
+fuel_prime_movers = ['ST','GT','IC','CA','CT','CS','CC']
+gen_relevant_data = ['Plant Code', 'Plant Name', 'Generator ID',
     'Prime Mover', 'Unit Code', 'Nameplate Capacity (MW)',
     'Summer Capacity (MW)', 'Winter Capacity (MW)', 'Minimum Load (MW)',
     'Operating Year', 'Planned Retirement Year', 'Energy Source 1',
     'Time from Cold Shutdown to Full Load', 'Carbon Capture Technology?',
     'Latitude', 'Longitude', 'Balancing Authority Name', 'Grid Voltage (kV)',
-    'Operational Status']
+    'Operational Status','County']
 gen_data_to_be_summed = ['Nameplate Capacity (MW)', 'Summer Capacity (MW)',
                         'Winter Capacity (MW)', 'Minimum Load (MW)']
 gen_aggregation_lists = [['Plant Code','Unit Code'],
                     ['Plant Code', 'Prime Mover', 'Energy Source 1',
                         'Operating Year']]
+months = {
+    'January':31,
+    'February':28,
+    'March':31,
+    'April':30,
+    'May':31,
+    'June':30,
+    'July':31,
+    'August':31,
+    'September':30,
+    'October':31,
+    'November':30,
+    'December':31}
 
 
 def main():
-    file_list = scrape_eia860()
-    # Only unzip the last year of generator listings for now.
-    # Note, the file listings/data structures are different prior to 2013.
-    unzip([file_list[-1]])
-    parse_dat([os.path.splitext(file_list[-1])[0]])
+    if CLEAR_PRIOR_OUTPUTS:
+        for f in os.listdir(outputs_directory):
+            os.remove(os.path.join(outputs_directory,f))
+
+    zip_file_list = scrape_eia860()
+    unzip(zip_file_list)
+    parse_eia860_dat([os.path.splitext(f)[0] for f in zip_file_list])
+
+    zip_file_list = scrape_eia923()
+    unzip(zip_file_list)
+    parse_eia923_dat([os.path.splitext(f)[0] for f in zip_file_list])
 
 
 def scrape_eia860():
@@ -87,7 +109,115 @@ def scrape_eia860():
     return [os.path.join(unzip_directory, f) for f in file_list]
 
 
-def parse_dat(directory_list):
+def scrape_eia923():
+    if not os.path.exists(unzip_directory):
+        os.makedirs(unzip_directory)
+    log_dat = []
+    file_list = ['f923_{}.zip'.format(year) if year >= 2008
+                    else 'f906920_{}.zip'.format(year)
+                        for year in range(start_year, end_year+1)]
+    for filename in file_list:
+        local_path = os.path.join(unzip_directory, filename)
+        if REUSE_PRIOR_DOWNLOADS and os.path.isfile(local_path):
+            print "Skipping " + filename + " because it was already downloaded."
+            continue
+        print "Downloading " + local_path
+        url = 'https://www.eia.gov/electricity/data/eia923/xls/' + filename
+        meta_data = download_file(url, local_path)
+        log_dat.append(meta_data)
+
+    # Only write the log file header if we are starting a new log
+    write_log_header = not os.path.isfile(log_path)
+    with open(log_path, 'ab') as logfile:
+        logwriter = csv.writer(logfile, delimiter='\t',
+                               quotechar="'", quoting=csv.QUOTE_MINIMAL)
+        if write_log_header:
+            logwriter.writerow(download_metadata_fields)
+        logwriter.writerows(log_dat)
+    
+    return [os.path.join(unzip_directory, f) for f in file_list]
+
+
+def parse_eia923_dat(directory_list):
+    for directory in directory_list:
+        year = int(directory[-4:])
+        print "============================="
+        print "Processing data for year {}.".format(year)
+        # Name of the relevant spreadsheet is not consistent throughout years
+        # Read largest file in the directory instead of looking by name
+        largest_file = max([os.path.join(directory, f)
+            for f in os.listdir(directory)], key=os.path.getsize)
+        if year >= 2011:
+            rows_to_skip = 5
+        else:
+            rows_to_skip = 7
+        generation = pd.read_excel(largest_file,
+            sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip)
+        print "Read in data for {} generation plants in the US.".format(len(generation))
+
+        # Filter to units in the WECC region
+        generation = generation[generation['NERC Region']=='WECC']
+        generation.reset_index(drop=True, inplace=True)
+        hydro_generation = generation[
+            (generation.filter(regex=r'Reported(^|\s)Fuel Type Code')=='WAT').iloc[:,0]].rename(
+            columns={'Plant Id':'Plant Code','Reported Prime Mover':'Prime Mover',
+            'Reported\nPrime Mover':'Prime Mover'})
+        fuel_based_generation = generation[
+            (generation.filter(regex=r'Reported(^|\s)Prime Mover')).iloc[:,0].isin(fuel_prime_movers)]
+        print "Filtered to {} generation plants in the WECC Region.".format(len(generation))
+        print "---Hydro projects:{}".format(len(hydro_generation))
+        print "---Fuel based projects:{}".format(len(fuel_based_generation))
+
+        generation_projects = pd.read_csv(
+            os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
+            sep='\t')
+        hydro_gen_projects = generation_projects[
+            (generation_projects['Operational Status']=='Operable') &
+            (generation_projects['Energy Source 1']=='WAT')]
+        fuel_based_gen_projects = generation_projects[
+            (generation_projects['Operational Status']=='Operable') &
+            (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
+
+                # Hydro projects are aggregated by plant
+        gb = hydro_gen_projects.groupby(['Plant Code','Prime Mover'])
+        hydro_gen_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                                        for datum in gen_relevant_data})
+        print "Read existing hydro projects in form EIA860 and aggregated into {} plants.".format(len(hydro_gen_projects))
+
+        # Cross-check data
+        if hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[True] == len(hydro_gen_projects):
+            print "All hydro projects registered in the EIA860 form that have data in the EIA923 form."
+        else:
+            print "{} hydro projects registered in the EIA860 form do not have data in the EIA923 form:".format(
+                hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[False])
+            print hydro_gen_projects[~hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code'])]['Plant Name'].values
+        if hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[True] == len(hydro_generation):
+            print "All hydro projects with data in the EIA923 form exist in the EIA860 registry."
+        else:
+            print "{} hydro projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
+                hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[False])
+            print hydro_generation[~hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code'])]['Plant Name'].values
+
+        # Save hydro profiles
+        hydro_outputs=pd.concat([
+            hydro_generation[['Plant Code','Plant Name','Prime Mover']],
+            hydro_generation.filter(regex=r'(?i)netgen')
+            ], axis=1).replace('.', 0)
+        hydro_outputs.loc[:,'Year']=year
+        hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+            on=['Plant Code','Prime Mover'], suffixes=('',''))
+        for i,m in enumerate(months):
+            hydro_outputs.rename(columns={hydro_outputs.columns[3+i]:i+1}, inplace=True)
+            hydro_outputs.loc[:,i+1] = hydro_outputs.loc[:,i+1].div(months[m]*24*hydro_outputs['Nameplate Capacity (MW)'])
+        
+        hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
+        write_hydro_output_header = not os.path.isfile(hydro_output_path)
+        with open(hydro_output_path, 'ab') as outfile:
+            hydro_outputs.to_csv(outfile, sep='\t', header=write_hydro_output_header, encoding='utf-8')
+        print "Saved hydro output data to {}.".format(hydro_output_path)
+
+
+def parse_eia860_dat(directory_list):
     for directory in directory_list:
         year = directory[-4:]
         print "============================="
@@ -130,12 +260,13 @@ def parse_dat(directory_list):
             "region.".format(len(generators[generators['Operational Status']=='Operable']),
             len(generators[generators['Operational Status']=='Proposed']))
 
-        # Prepare numeric columns
+        # Replace spaces in numeric columns with null values
         for col in gen_data_to_be_summed:
             generators[col].replace(' ', 0, inplace=True)
 
         # Aggregate according to user criteria
         for agg_list in gen_aggregation_lists:
+            # Assign unique values to empty cells in columns that will be aggregated upon
             for col in agg_list:
                 if generators[col].dtype == np.float64:
                     generators[col].fillna(
@@ -144,6 +275,7 @@ def parse_dat(directory_list):
                     generators[col].fillna(
                         {i:'None'+str(i) for i in generators.index}, inplace=True)
             gb = generators.groupby(agg_list)
+            # Some columns will be summed and all others will get the 'max' value
             generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                 for datum in gen_relevant_data})
             generators.reset_index(drop=True, inplace=True)
@@ -157,7 +289,7 @@ def parse_dat(directory_list):
             os.makedirs(outputs_directory)
         fname = 'generation_projects_{}.tab'.format(year)
         with open(os.path.join(outputs_directory, fname),'w') as f:
-            generators.to_csv(f, sep='\t')
+            generators.to_csv(f, sep='\t', encoding='utf-8')
         print "Saved data to {} file.".format(fname)
 
 
