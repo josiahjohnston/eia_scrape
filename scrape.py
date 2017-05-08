@@ -107,6 +107,10 @@ def uniformize_names(df):
 
 
 def main():
+    for directory in (unzip_directory, other_data_directory, outputs_directory):
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
     if CLEAR_PRIOR_OUTPUTS:
         for f in os.listdir(outputs_directory):
             os.remove(os.path.join(outputs_directory,f))
