@@ -4,8 +4,8 @@
 
 # Individuals
 Josiah Johnston
-Benjamin Maluenda
+Benjamin Maluenda <bmaluenda@inodu.com>
 
 # Organizations
 University of California Berkeley
-inodú Chile
+inodu Chile <www.inodu.com>

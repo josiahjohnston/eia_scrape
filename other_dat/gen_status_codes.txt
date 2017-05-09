@@ -10,8 +10,6 @@ calendar year."
 OA	"Out of service - was not used for some or all of the reporting
 periodbutisexpectedtobereturnedtoserviceinthenext
 calendar year."
-RE	"Retired - no longer in service and not expected to be returned to
-service."
 IP	"Planned new generator canceled, indefinitely postponed, or no
 longer in resource plan"
 TS	"Construction complete, but not yet in commercial operation

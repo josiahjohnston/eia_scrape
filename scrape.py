@@ -4,7 +4,8 @@
 Scrape data on existing and planned generators in the United States from the 
 Energy Information Agency's EIA860 and EIA923 forms (and their older versions).
 
-Enables sequential aggregation of generator data by multiple criteria.
+Enables sequential aggregation of generator data by multiple criteria and
+filtering projects of specific NERC Regions.
 
 Extracts monthly capacity factors for each hydroelectric generation plant.
 
@@ -12,10 +13,23 @@ All data is scrapped and parsed from 2004 onwards.
 
 To Do:
 Extract historic heat rates.
-Determine how to obtain capacity factors previous to 2004.
-Determine if code for scraping the next datasets needs to live here or if it
-can live in other files.
-More QA/QC on output
+More error checks.
+More QA/QC on output.
+Set Prime Mover of aggregated combined cycle plants to 'CC'.
+Filter proposed plants by Status.
+Include Status column in generation projects' output sheet.
+Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
+but first check that uprating is not significant for hydro plants.
+Use packages for specific functions instead of writing custom code.
+Print output sheet in a frendlier order (Plant Id, Plant Name, ..., optionals)
+Move WECC filtering snippets to a separate function and allow filtering by other
+Regions or not at all.
+Drop Unit Code column on output sheets.
+Add 'EIA' prefix on Code columns on output sheets.
+Do a reality check on historic hydro outputs and thermal heat rates.
+Re-organize specific snippets of code into functions.
+Write a report with assumptions taken and observations noticed during the writing
+of these scripts and data analysis.
 
 Assumptions:
 Only single fuels are considered.
@@ -347,7 +361,7 @@ def parse_eia860_dat(directory_list):
                 generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                 for datum in gen_relevant_data+gen_relevant_data_for_last_year})
             generators.reset_index(drop=True, inplace=True)
-            print "Filtered to {} existing and {} new generation units by aggregating "\
+            print "Aggregated to {} existing and {} new generation units by aggregating "\
                 "through {}.".format(len(generators[generators['Operational Status']=='Operable']),
                 len(generators[generators['Operational Status']=='Proposed']), agg_list)
         generators = generators.astype(
@@ -372,32 +386,6 @@ def assign_counties_to_region():
     with open(file_path, 'w') as f:
         wecc_counties.to_csv(f, header=False, index=False)
     print "Saved list of counties assigned to WECC in {}".format(file_path)
-
-    # Group by Plant, Technology, Unit Code
-    # 'Plant Code', 'Technology', 'Unit Code'
-    # Plant-level data
-    # 'Utility ID', 'Utility Name', 'Plant Name', 'Street Address', 'City', 'State', 'Zip', 'County', 'Latitude', 'Longitude', 'NERC Region', 'Balancing Authority Code', 'Balancing Authority Name'
-    # Group data (sum)
-    # 'Nameplate Capacity (MW)', 'Summer Capacity (MW)', 'Winter Capacity (MW)', 'Minimum Load (MW)',
-    # Plant-level data or Unit-level data?
-    # 'Status', 'Operating Year', 'Planned Retirement Year'
-    # 'Associated with Combined Heat and Power System', 'Topping or Bottoming'
-    # 'Energy Source 1'
-    # Ignore multi-fuel for now: 'Cofire Fuels?', 'Energy Source 2', 'Energy Source 3', 'Energy Source 4', 'Energy Source 5', 'Energy Source 6'
-    # 'Carbon Capture Technology?'
-    # 'Time from Cold Shutdown to Full Load' 
-    # 10M -> Quickstart
-    # 1H, 12H (other reserves)
-    # OVER (operated as baseload/flexible baseload; presumably day+ start times)
-    # '' -> Mostly wind & solar. Handful of other generators
-    # Combined cycle considerations
-    # 'Duct Burners' means the overall unit can get heat separately from the exhaust gas
-    # 'Can Bypass Heat Recovery Steam Generator?' - means the combustion turbine operate independently of the steam generator. In 2015, 247 gas CT units were capable of this.
-    
-    # Wind only; Can ignore for now. 3_2_Wind_Y2015.xlsx 'Number of Turbines',
-    # 'Predominant Turbine Manufacturer', 'Predominant Turbine Model Number',
-    # 'Design Wind Speed (mph)', 'Wind Quality Class', 'Turbine Hub Height (Feet)'
-    # Solar has similar data available
 
     # Generator costs from schedule 5 are hidden for individual generators,
     # but published in aggregated form. 2015 data is expected to be available
