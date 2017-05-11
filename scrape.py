@@ -219,6 +219,7 @@ def parse_eia923_dat(directory_list):
         print "Filtered to {} generation plants in the WECC Region.".format(len(generation))
         print "\tHydro projects:{}".format(len(hydro_generation))
         print "\tFuel based projects:{}".format(len(fuel_based_generation))
+        print "\tOther projects:{}".format(len(generation) - len(fuel_based_generation) - len(hydro_generation))
 
         generation_projects = pd.read_csv(
             os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
@@ -230,11 +231,16 @@ def parse_eia923_dat(directory_list):
             (generation_projects['Operational Status']=='Operable') &
             (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
 
-        # Hydro projects are aggregated by plant
+        # Hydro projects are aggregated by plant and prime mover
         gb = hydro_gen_projects.groupby(['Plant Code','Prime Mover'])
         hydro_gen_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                         for datum in gen_relevant_data})
         print "Read existing hydro projects in form EIA860 and aggregated into {} plants.".format(len(hydro_gen_projects))
+
+        # Fuel projects are aggregated by plant and prime mover
+        gb = fuel_based_gen_projects.groupby(['Plant Code','Prime Mover'])
+        fuel_based_gen_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                                        for datum in gen_relevant_data})
 
         # Cross-check data
         if hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[True] == len(hydro_gen_projects):
@@ -243,14 +249,29 @@ def parse_eia923_dat(directory_list):
             print "{} hydro projects registered in the EIA860 form do not have data in the EIA923 form:".format(
                 hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[False])
             for plant in hydro_gen_projects[~hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code'])]['Plant Name']:
-                print "\t{}: {} MW".format(plant,hydro_gen_projects[hydro_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
+                print "\t{}: {} MW of capacity".format(plant,hydro_gen_projects[hydro_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
         if hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[True] == len(hydro_generation):
             print "All hydro projects with data in the EIA923 form exist in the EIA860 registry."
         else:
             print "{} hydro projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
                 hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[False])
             for plant in hydro_generation[~hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code'])]['Plant Name']:
-                print "\t{}".format(plant)
+                print "\t{}: {} MWh of generation".format(plant, hydro_generation[hydro_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
+
+        if fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[True] == len(fuel_based_gen_projects):
+            print "\nAll thermal projects registered in the EIA860 form that have data in the EIA923 form."
+        else:
+            print "{} thermal projects registered in the EIA860 form do not have data in the EIA923 form:".format(
+                fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[False])
+            for plant in fuel_based_gen_projects[~fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code'])]['Plant Name']:
+                print "\t{}: {} MW of capacity".format(plant,fuel_based_gen_projects[fuel_based_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
+        if fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code']).value_counts()[True] == len(fuel_based_generation):
+            print "All thermal projects with data in the EIA923 form exist in the EIA860 registry."
+        else:
+            print "{} thermal projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
+                fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code']).value_counts()[False])
+            for plant in fuel_based_generation[~fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code'])]['Plant Name']:
+                print "\t{}: {} MWh of generation".format(plant, fuel_based_generation[fuel_based_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
 
         # Save hydro profiles
         hydro_outputs=pd.concat([
@@ -263,12 +284,35 @@ def parse_eia923_dat(directory_list):
         for i,m in enumerate(months):
             hydro_outputs.rename(columns={hydro_outputs.columns[3+i]:i+1}, inplace=True)
             hydro_outputs.loc[:,i+1] = hydro_outputs.loc[:,i+1].div(months[m]*24*hydro_outputs['Nameplate Capacity (MW)'])
-        
+            
+        # Save heat rate profiles
+        heat_rate_outputs=pd.concat([
+            fuel_based_generation[['Plant Code','Plant Name','Prime Mover','Energy Source']],
+            fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu'),
+            fuel_based_generation.filter(regex=r'(?i)netgen')
+            ], axis=1).replace('.', 0)
+        heat_rate_outputs.loc[:,'Year']=year
+        heat_rate_outputs=pd.merge(heat_rate_outputs, fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+            on=['Plant Code','Prime Mover'], suffixes=('',''))
+        for i,m in enumerate(months):
+            heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
+            heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
+            heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
+
+        # Get the best heat rate (nearest to full load)
+        heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs.iloc[:,4:16].min(axis=1)
+
         hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
         write_hydro_output_header = not os.path.isfile(hydro_output_path)
         with open(hydro_output_path, 'ab') as outfile:
             hydro_outputs.to_csv(outfile, sep='\t', header=write_hydro_output_header, encoding='utf-8')
         print "Saved hydro output data to {}.".format(hydro_output_path)
+
+        heat_rate_output_path = os.path.join(outputs_directory,'historic_heat_rates.tab')
+        write_heat_rates_header = not os.path.isfile(heat_rate_output_path)
+        with open(heat_rate_output_path, 'ab') as outfile:
+            heat_rate_outputs.to_csv(outfile, sep='\t', header=write_heat_rates_header, encoding='utf-8')
+        print "Saved heat rate data to {}.".format(heat_rate_output_path)
 
 
 def parse_eia860_dat(directory_list):
