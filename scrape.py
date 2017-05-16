@@ -9,47 +9,28 @@ filtering projects of specific NERC Regions.
 
 Extracts monthly capacity factors for each hydroelectric generation plant.
 
+Extracts monthly heat rate factors for each thermal generation plant.
+
 All data is scrapped and parsed from 2004 onwards.
 
 To Do:
-Extract historic heat rates.
 More error checks.
 More QA/QC on output.
-Set Prime Mover of aggregated combined cycle plants to 'CC'.
-Filter proposed plants by Status.
-Include Status column in generation projects' output sheet.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
-Use packages for specific functions instead of writing custom code.
-Print output sheet in a frendlier order (Plant Id, Plant Name, ..., optionals)
-Move WECC filtering snippets to a separate function and allow filtering by other
-Regions or not at all.
-Drop Unit Code column on output sheets.
-Add 'EIA' prefix on Code columns on output sheets.
 Do a reality check on historic hydro outputs and thermal heat rates.
-Re-organize specific snippets of code into functions.
 Write a report with assumptions taken and observations noticed during the writing
 of these scripts and data analysis.
 
-Assumptions:
-Only single fuels are considered.
-Ignoring uprates and downrates.
-Ignore summer and winter capacities.
-Some data is only extracted for the last year.
-If more than 50% of a county's area is in WECC, then its plants are included.
-Taking the 'max' value of each column that is not summed in the aggregation process
-of generation projects (the most relevant effect of this is taking the maximum
-time from cold shutdown to full load for several units aggregated into a plant).
 
 """
 
-import csv
-import os
+import csv, os, re
 import numpy as np
 import pandas as pd
 
 # Update the reference to the utils module after this becomes a package
-from utils import download_file, download_metadata_fields, unzip, connect_to_db_and_run_query
+from utils import download_file, download_metadata_fields, unzip
 
 unzip_directory = 'downloads'
 other_data_directory = 'other_dat'
@@ -57,13 +38,14 @@ outputs_directory = 'processed_data'
 log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
 CLEAR_PRIOR_OUTPUTS = True
-start_year, end_year = 2004,2015
+start_year, end_year = 2011,2015
 fuel_prime_movers = ['ST','GT','IC','CA','CT','CS','CC']
-wecc_states = ['WA','OR','CA','AZ','NV','NM','UT','ID','MT','WY','CO','TX']
-gen_relevant_data = ['Plant Code', 'Plant Name', 'Generator Id',
-                    'Prime Mover', 'Unit Code', 'Nameplate Capacity (MW)',
+region_states = ['WA','OR','CA','AZ','NV','NM','UT','ID','MT','WY','CO','TX']
+accepted_status_codes = ['OP','SB','CO','SC','OA','OZ','TS','L','T','U','V']
+gen_relevant_data = ['Plant Code', 'Plant Name', 'Status', 'Nameplate Capacity (MW)',
+                    'Prime Mover', 'Energy Source', 'County', 'State', 'Nerc Region',
                     'Operating Year', 'Planned Retirement Year',
-                    'Energy Source', 'Operational Status','County']
+                    'Generator Id', 'Unit Code', 'Operational Status']
 gen_data_to_be_summed = ['Nameplate Capacity (MW)']
 gen_aggregation_lists = [
                             ['Plant Code','Unit Code'],
@@ -115,7 +97,9 @@ def uniformize_names(df):
         'Insvyear':'Operating Year',
         'Retireyear':'Planned Retirement Year',
         'Cntyname':'County',
-        'Proposed Nameplate':'Nameplate Capacity (MW)'
+        'Proposed Nameplate':'Nameplate Capacity (MW)',
+        'Proposed Status':'Status',
+        'Eia Plant Code':'Plant Code'
         }, inplace=True)
     return df
 
@@ -131,11 +115,11 @@ def main():
 
     zip_file_list = scrape_eia860()
     unzip(zip_file_list)
-    parse_eia860_dat([os.path.splitext(f)[0] for f in zip_file_list])
+    parse_eia860_data([os.path.splitext(f)[0] for f in zip_file_list])
 
     zip_file_list = scrape_eia923()
     unzip(zip_file_list)
-    parse_eia923_dat([os.path.splitext(f)[0] for f in zip_file_list])
+    parse_eia923_data([os.path.splitext(f)[0] for f in zip_file_list])
 
 
 def scrape_eia860():
@@ -194,7 +178,7 @@ def scrape_eia923():
     return [os.path.join(unzip_directory, f) for f in file_list]
 
 
-def parse_eia923_dat(directory_list):
+def parse_eia923_data(directory_list):
     for directory in directory_list:
         year = int(directory[-4:])
         print "============================="
@@ -209,54 +193,60 @@ def parse_eia923_dat(directory_list):
             rows_to_skip = 7
         generation = uniformize_names(pd.read_excel(largest_file,
             sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
-        print "Read in data for {} generation plants in the US.".format(len(generation))
+        # Get column order for easier month matching later on
+        column_order = list(generation.columns)
+        # Remove "State-Fuel Level Increment" fictional plants
+        generation = generation.loc[generation['Plant Code']!=99999]
+        print "Read in EIA923 fuel and generation data for {} generation units and plants in the US.".format(len(generation))
 
-        # Filter to units in the WECC region
-        generation = generation[generation['Nerc Region']=='WECC']
-        generation.reset_index(drop=True, inplace=True)
+        # Replace characters with zeros when no value is provided
+        numeric_columns = [col for col in generation.columns if 
+            re.compile('(?i)elec[_\s]mmbtu').match(col) or re.compile('(?i)netgen').match(col)]
+        for col in numeric_columns:
+            generation[col].replace(' ', 0, inplace=True)
+            generation[col].replace('.', 0, inplace=True)
+
+        # Aggregated generation of plants. First assign CC as prime mover for combined cycles.
+        generation.loc[generation['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover']='CC'
+        gb = generation.groupby(['Plant Code','Prime Mover','Energy Source'])
+        generation = gb.agg({datum:('max' if datum not in numeric_columns else sum)
+                                        for datum in generation.columns})
         hydro_generation = generation[generation['Energy Source']=='WAT']
         fuel_based_generation = generation[generation['Prime Mover'].isin(fuel_prime_movers)]
-        print "Filtered to {} generation plants in the WECC Region.".format(len(generation))
+        print "Aggregated generation data to {} generation plants through Plant Code, Prime Mover and Energy Source.".format(len(generation))
         print "\tHydro projects:{}".format(len(hydro_generation))
         print "\tFuel based projects:{}".format(len(fuel_based_generation))
         print "\tOther projects:{}".format(len(generation) - len(fuel_based_generation) - len(hydro_generation))
 
-        generation_projects = pd.read_csv(
+        generation_projects = uniformize_names(pd.read_csv(
             os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
-            sep='\t')
+            sep='\t'))
+        print "Read in processed EIA860 plant data for {} generation units in the US".format(len(generation_projects))
+        gb = generation_projects.groupby(['Plant Code','Prime Mover'])
+        generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                                        for datum in generation_projects.columns})
         hydro_gen_projects = generation_projects[
             (generation_projects['Operational Status']=='Operable') &
             (generation_projects['Energy Source']=='WAT')]
         fuel_based_gen_projects = generation_projects[
             (generation_projects['Operational Status']=='Operable') &
             (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
+        print "Aggregated plant data into {} generation plants through Plant Code and Prime Mover.".format(len(generation_projects))
+        print "\tHydro projects:{}".format(len(hydro_gen_projects))
+        print "\tFuel based projects:{}".format(len(fuel_based_gen_projects))
+        print "\tOther projects:{}".format(len(generation_projects) - len(fuel_based_gen_projects) - len(hydro_gen_projects))
 
-        # Hydro projects are aggregated by plant and prime mover
-        gb = hydro_gen_projects.groupby(['Plant Code','Prime Mover'])
-        hydro_gen_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                        for datum in gen_relevant_data})
-        print "Read existing hydro projects in form EIA860 and aggregated into {} plants.".format(len(hydro_gen_projects))
-
-        # Fuel projects are aggregated by plant and prime mover
-        gb = fuel_based_gen_projects.groupby(['Plant Code','Prime Mover'])
-        fuel_based_gen_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                        for datum in gen_relevant_data})
-
-        # Cross-check data
-        if hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[True] == len(hydro_gen_projects):
-            print "All hydro projects registered in the EIA860 form that have data in the EIA923 form."
-        else:
-            print "{} hydro projects registered in the EIA860 form do not have data in the EIA923 form:".format(
-                hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[False])
-            for plant in hydro_gen_projects[~hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code'])]['Plant Name']:
-                print "\t{}: {} MW of capacity".format(plant,hydro_gen_projects[hydro_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
-        if hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[True] == len(hydro_generation):
-            print "All hydro projects with data in the EIA923 form exist in the EIA860 registry."
-        else:
-            print "{} hydro projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
-                hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[False])
-            for plant in hydro_generation[~hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code'])]['Plant Name']:
-                print "\t{}: {} MWh of generation".format(plant, hydro_generation[hydro_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
+        # Cross-check data and print console messages with gaps. Still needs a bit of work.
+        # Projects with plant data, but no generation data
+        print "{} hydro projects registered in the EIA860 form do not have data in the EIA923 form:".format(
+            hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[False])
+        for plant in hydro_gen_projects[~hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code'])]['Plant Name']:
+            print "\t{}: {} MW of capacity".format(plant,hydro_gen_projects[hydro_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
+        # Projects with generation data, but no plant data
+        print "{} hydro projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
+            hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[False])
+        for plant in hydro_generation[~hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code'])]['Plant Name']:
+            print "\t{}: {} MWh of generation".format(plant, hydro_generation[hydro_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
 
         if fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[True] == len(fuel_based_gen_projects):
             print "\nAll thermal projects registered in the EIA860 form that have data in the EIA923 form."
@@ -273,11 +263,15 @@ def parse_eia923_dat(directory_list):
             for plant in fuel_based_generation[~fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code'])]['Plant Name']:
                 print "\t{}: {} MWh of generation".format(plant, fuel_based_generation[fuel_based_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
 
+        # Recover original column order
+        hydro_generation = hydro_generation[column_order]
+        fuel_based_generation = fuel_based_generation[column_order]
+
         # Save hydro profiles
         hydro_outputs=pd.concat([
             hydro_generation[['Plant Code','Plant Name','Prime Mover']],
             hydro_generation.filter(regex=r'(?i)netgen')
-            ], axis=1).replace('.', 0)
+            ], axis=1)
         hydro_outputs.loc[:,'Year']=year
         hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
             on=['Plant Code','Prime Mover'], suffixes=('',''))
@@ -290,17 +284,20 @@ def parse_eia923_dat(directory_list):
             fuel_based_generation[['Plant Code','Plant Name','Prime Mover','Energy Source']],
             fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu'),
             fuel_based_generation.filter(regex=r'(?i)netgen')
-            ], axis=1).replace('.', 0)
+            ], axis=1)
         heat_rate_outputs.loc[:,'Year']=year
-        heat_rate_outputs=pd.merge(heat_rate_outputs, fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+        heat_rate_outputs=pd.merge(heat_rate_outputs,
+            fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
             on=['Plant Code','Prime Mover'], suffixes=('',''))
+
         for i,m in enumerate(months):
             heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
             heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
             heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
 
-        # Get the best heat rate (nearest to full load)
-        heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs.iloc[:,4:16].min(axis=1)
+        # Get the best heat rate in a sepparate column (ignore negative values,
+        # which I think correspond to cogenerators)
+        heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>=0].iloc[:,4:16].min(axis=1)
 
         hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
         write_hydro_output_header = not os.path.isfile(hydro_output_path)
@@ -312,42 +309,48 @@ def parse_eia923_dat(directory_list):
         write_heat_rates_header = not os.path.isfile(heat_rate_output_path)
         with open(heat_rate_output_path, 'ab') as outfile:
             heat_rate_outputs.to_csv(outfile, sep='\t', header=write_heat_rates_header, encoding='utf-8')
-        print "Saved heat rate data to {}.".format(heat_rate_output_path)
+        print "Saved heat rate data to {}.\n".format(heat_rate_output_path)
 
 
-def parse_eia860_dat(directory_list):
+def parse_eia860_data(directory_list):
     for directory in directory_list:
         year = int(directory[-4:])
         print "============================="
         print "Processing data for year {}.".format(year)
 
+        # Different number of blank rows depending on year
         if year <= 2010:
             rows_to_skip = 0
         else:
             rows_to_skip = 1
 
         for f in os.listdir(directory):
-            # Avoid trying to read a temporal file is any Excel workbook is open
+            path = os.path.join(directory, f)
+            # Use a simple for loop, since for years previous to 2008, there are
+            # multiple ocurrences of "GenY" in files. Haven't found a clever way
+            # to do a pattern search with Glob that excludes unwanted files.
+            # In any case, all files are read differently with Pandas, so I'm not
+            # sure that the code would become any cleaner by using Glob.
+
+            # From 2009 onwards, look for files with "Plant" and "Generator" in its
+            # name.
+            # Avoid trying to read a temporal file if any Excel workbook is open
             if 'Plant' in f and '~' not in f:
-                path = os.path.join(directory, f)
-                plants = pd.read_excel(path, sheetname=0, skiprows=rows_to_skip)
-                plants = uniformize_names(plants)
+                plants = uniformize_names(
+                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
             if 'Generator' in f and '~' not in f:
-                path = os.path.join(directory, f)
                 existing_generators = uniformize_names(
                     pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
                 existing_generators['Operational Status'] = 'Operable'
                 proposed_generators = uniformize_names(
                     pd.read_excel(path, sheetname=1, skiprows=rows_to_skip))
                 proposed_generators['Operational Status'] = 'Proposed'
-            # Different names for 2008 and previous
-            if f.startswith('PRGenY') and '~' not in f:
-                path = os.path.join(directory, f)
+            # Different names from 2008 backwards
+            if f.startswith('PRGenY'):
                 proposed_generators = uniformize_names(
                     pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
                 proposed_generators['Operational Status'] = 'Proposed'
-            if f.startswith('GenY') and '~' not in f:
-                path = os.path.join(directory, f)
+            if f.startswith('GenY'):
                 existing_generators = uniformize_names(
                     pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
                 existing_generators['Operational Status'] = 'Operable'
@@ -358,33 +361,21 @@ def parse_eia860_dat(directory_list):
         print "Read in data for {} existing and {} proposed generation units in "\
             "the US.".format(len(existing_generators), len(proposed_generators))
 
-        # Assign projects to WECC region according to county if no NERC Region
-        # is defined. Counties must be located in a WECC state.
-        county_list_path = os.path.join(other_data_directory, 'wecc_counties.txt')
-        if not os.path.exists(county_list_path):
-            print "Database will be queried to obtain list of counties that belong to WECC."
-            assign_counties_to_region()
-        county_list = list(pd.read_csv(county_list_path, header=None)[0].map(lambda c: str(c).title()))
-        generators.loc[
-            (generators['County'].map(lambda c: str(c).title()).isin(
-                county_list+mispelled_counties)) & 
-            (generators['State'].isin(wecc_states)),'Nerc Region'] = 'WECC'
-
-        # Filter to units in the WECC region
-        if year != end_year:
-            generators = generators[generators['Nerc Region']=='WECC'][gen_relevant_data]
-        else:
-            generators = generators[generators['Nerc Region']=='WECC'][gen_relevant_data+gen_relevant_data_for_last_year]
-        generators.reset_index(drop=True, inplace=True)
-        print "Filtered to {} existing and {} proposed generation units in the WECC "\
-            "region.".format(len(generators[generators['Operational Status']=='Operable']),
-            len(generators[generators['Operational Status']=='Proposed']))
+        # Filter projects according to status
+        generators = generators.loc[generators['Status'].isin(accepted_status_codes)]
+        print "Filtered to {} existing and {} proposed generation units by removing inactive "\
+            "and planned projects not yet started.".format(
+                len(generators[generators['Operational Status']=='Operable']),
+                len(generators[generators['Operational Status']=='Proposed']))
 
         # Replace chars in numeric columns with null values
         # Most appropriate way would be to replace value with another column
         for col in gen_data_to_be_summed:
             generators[col].replace(' ', 0, inplace=True)
             generators[col].replace('.', 0, inplace=True)
+
+        # Manually set Prime Mover of combined cycle plants before aggregation
+        generators.loc[generators['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover'] = 'CC'
 
         # Aggregate according to user criteria
         for agg_list in gen_aggregation_lists:
@@ -398,58 +389,103 @@ def parse_eia860_dat(directory_list):
                         {i:'None'+str(i) for i in generators.index}, inplace=True)
             gb = generators.groupby(agg_list)
             # Some columns will be summed and all others will get the 'max' value
+            # Columns are reordered after aggregation for easier inspection
             if year != end_year:
                 generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                for datum in gen_relevant_data})
+                                for datum in gen_relevant_data}).loc[:,gen_relevant_data]
             else:
                 generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                for datum in gen_relevant_data+gen_relevant_data_for_last_year})
+                                for datum in gen_relevant_data+gen_relevant_data_for_last_year}).loc[
+                                :,gen_relevant_data+gen_relevant_data_for_last_year]
             generators.reset_index(drop=True, inplace=True)
             print "Aggregated to {} existing and {} new generation units by aggregating "\
                 "through {}.".format(len(generators[generators['Operational Status']=='Operable']),
                 len(generators[generators['Operational Status']=='Proposed']), agg_list)
+
+        # Write some columns as ints for easier inspection
         generators = generators.astype(
             {c: int for c in ['Operating Year', 'Plant Code']})
+        # Drop columns that are no longer needed
+        generators = generators.drop(['Unit Code','Generator Id'], axis=1)
+        # Add EIA prefix to be explicit about code origin
+        generators = generators.rename(columns={'Plant Code':'EIA Plant Code'})
 
         if not os.path.exists(outputs_directory):
             os.makedirs(outputs_directory)
         fname = 'generation_projects_{}.tab'.format(year)
         with open(os.path.join(outputs_directory, fname),'w') as f:
-            generators.to_csv(f, sep='\t', encoding='utf-8')
-        print "Saved data to {} file.".format(fname)
+            generators.to_csv(f, sep='\t', encoding='utf-8', index=False)
+        print "Saved data to {} file.\n".format(fname)
 
 
-def assign_counties_to_region():
-    # assign county if 50% or more of its area falls in the WECC region
-    query = "SELECT name \
-             FROM ventyx_nerc_reg_region regions CROSS JOIN us_counties counties \
-             WHERE regions.gid=13 AND \
-             ST_Area(ST_Intersection(counties.the_geom, regions.the_geom))/ST_Area(counties.the_geom)>=0.5"
-    wecc_counties = pd.DataFrame(connect_to_db_and_run_query(query=query, database='switch_gis'))
-    file_path = os.path.join(other_data_directory, 'wecc_counties.txt')
+def assign_counties_to_region(region_id, area=0.5):
+    """
+    Reads geographic data for US counties and assigns them to a NERC Region,
+    producing a simple text file with the list of counties which have more than
+    a certain % of area intersection with the specified Region.
+
+    """
+
+    query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(region_id)
+    region_name = connect_to_db_and_run_query(query=query, database='switch_gis')[0][0]
+    # assign county if (area)% or more of its area falls in the region
+    query = "SELECT name\
+             FROM ventyx_nerc_reg_region regions CROSS JOIN us_counties counties\
+             WHERE regions.gid={} AND\
+             ST_Area(ST_Intersection(counties.the_geom, regions.the_geom))/\
+             ST_Area(counties.the_geom)>={}".format(region_id, area)
+    wecc_counties = pd.DataFrame(connect_to_db_and_run_query(query=query,
+        database='switch_gis'))
+    file_path = os.path.join(other_data_directory, '{}_counties.txt'.format(
+        region_name))
     with open(file_path, 'w') as f:
         wecc_counties.to_csv(f, header=False, index=False)
-    print "Saved list of counties assigned to WECC in {}".format(file_path)
+    print "Saved list of counties assigned to the {} Region in {}".format(
+        region_name, file_path)
 
-    # Generator costs from schedule 5 are hidden for individual generators,
-    # but published in aggregated form. 2015 data is expected to be available
-    # in Feb 2017. Data only goes back to 2013; I don't know how to get good
-    # estimates of costs of older generators.
-    # http://www.eia.gov/electricity/generatorcosts/
+
+def filter_dataframe_by_region_id(df, region_id):
+    """
+    Filters a dataframe by NERC Region and assigns Regions to rows that
+    do not have one, according to County and State.
+
+    Should be migrated to a separate file to work directly with the DB.
+
+    """
+
+    # WECC region id: 13
+    query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(region_id)
+    region_name = connect_to_db_and_run_query(query=query, database='switch_gis')[0][0]
     
-    # Heat rates: My working plan is to pull plant output and fuel inputs on a
-    # monthly basis, calculate average monthly heat rates, inspect the data
-    # for a handful of plants and compare the results against generic heat
-    # rates for the given generator types. If things look reasonable, use that
-    # data series to estimate effective heat rates. Switch would like full
-    # load heat rates which may correspond to monthly heat rates where the
-    # plant had high cap factors. We could also use average heat rates based
-    # on historical cap factors, or we could try to estimate a heat rate curve
-    # (aka input-output curve) based on the monthly timeseries. Well, that last
-    # approach should probably wait until the second pass.
-    # If there are other data sources that I missed that would allow a more
-    # direct determination of heat rates, use those instead.
-    # Heat rate functionality could live in a separate file.
+    # Assign projects to region according to county if no NERC Region is defined.
+    county_list_path = os.path.join(other_data_directory, '{}_counties.txt'.format(region_name))
+    if not os.path.exists(county_list_path):
+        print "Database will be queried to obtain the list of counties that belong to the {} region.".format(region_name)
+        assign_counties_to_region(region_id, 0.5)
+    county_list = list(pd.read_csv(county_list_path, header=None)[0].map(lambda c: str(c).title()))
+    
+    # If region is not defined, use County and State to filter
+    # WARNING: This filter is not perfect
+    generators.loc[generators['Nerc Region'].isnull()]
+
+    df = df.loc[(df['Nerc Region'] == region_name) |
+        ((df['County'].map(lambda c: str(c).title()).isin(
+            county_list+mispelled_counties)) & 
+        (df['State'].isin(region_states)))] 
+    
+    df.reset_index(drop=True, inplace=True)
+    print "Filtered to {} existing and {} proposed generation units in the {} "\
+        "region.".format(region_name,
+            len(df[df['Operational Status']=='Operable']),
+            len(df[df['Operational Status']=='Proposed']))
+    return df
+
+
+# Generator costs from schedule 5 are hidden for individual generators,
+# but published in aggregated form. 2015 data is expected to be available
+# in Feb 2017. Data only goes back to 2013; I don't know how to get good
+# estimates of costs of older generators.
+# http://www.eia.gov/electricity/generatorcosts/
 
 
 if __name__ == "__main__":
