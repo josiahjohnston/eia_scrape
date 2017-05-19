@@ -14,11 +14,13 @@ Extracts monthly heat rate factors for each thermal generation plant.
 All data is scrapped and parsed from 2004 onwards.
 
 To Do:
-More error checks.
+Better error checks.
 More QA/QC on output.
+Print hydro capacity factors and heat rates in "short format", so that .tab files
+can be easily uploaded to the database. Do this IN ADDITION to current outputs,
+so that manual inspection can be easily done in the "long format" files.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
-Do a reality check on historic hydro outputs and thermal heat rates.
 Write a report with assumptions taken and observations noticed during the writing
 of these scripts and data analysis.
 
@@ -69,7 +71,7 @@ months = {
     'October':31,
     'November':30,
     'December':31}
-mispelled_counties = [
+misspelled_counties = [
     'Claveras'
     ]
 
@@ -236,32 +238,28 @@ def parse_eia923_data(directory_list):
         print "\tFuel based projects:{}".format(len(fuel_based_gen_projects))
         print "\tOther projects:{}".format(len(generation_projects) - len(fuel_based_gen_projects) - len(hydro_gen_projects))
 
-        # Cross-check data and print console messages with gaps. Still needs a bit of work.
-        # Projects with plant data, but no generation data
+        # Cross-check data and print console messages with gaps.
+        # Hydro projects with plant data, but no generation data
         print "{} hydro projects registered in the EIA860 form do not have data in the EIA923 form:".format(
             hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code']).value_counts()[False])
         for plant in hydro_gen_projects[~hydro_gen_projects['Plant Code'].isin(hydro_generation['Plant Code'])]['Plant Name']:
             print "\t{}: {} MW of capacity".format(plant,hydro_gen_projects[hydro_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
-        # Projects with generation data, but no plant data
+        # Hydro projects with generation data, but no plant data
         print "{} hydro projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
             hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code']).value_counts()[False])
         for plant in hydro_generation[~hydro_generation['Plant Code'].isin(hydro_gen_projects['Plant Code'])]['Plant Name']:
             print "\t{}: {} MWh of generation".format(plant, hydro_generation[hydro_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
 
-        if fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[True] == len(fuel_based_gen_projects):
-            print "\nAll thermal projects registered in the EIA860 form that have data in the EIA923 form."
-        else:
-            print "{} thermal projects registered in the EIA860 form do not have data in the EIA923 form:".format(
-                fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[False])
-            for plant in fuel_based_gen_projects[~fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code'])]['Plant Name']:
-                print "\t{}: {} MW of capacity".format(plant,fuel_based_gen_projects[fuel_based_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
-        if fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code']).value_counts()[True] == len(fuel_based_generation):
-            print "All thermal projects with data in the EIA923 form exist in the EIA860 registry."
-        else:
-            print "{} thermal projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
-                fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code']).value_counts()[False])
-            for plant in fuel_based_generation[~fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code'])]['Plant Name']:
-                print "\t{}: {} MWh of generation".format(plant, fuel_based_generation[fuel_based_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
+        # Thermal projects with plant data, but no generation data
+        print "{} thermal projects registered in the EIA860 form do not have data in the EIA923 form:".format(
+            fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code']).value_counts()[False])
+        for plant in fuel_based_gen_projects[~fuel_based_gen_projects['Plant Code'].isin(fuel_based_generation['Plant Code'])]['Plant Name']:
+            print "\t{}: {} MW of capacity".format(plant,fuel_based_gen_projects[fuel_based_gen_projects['Plant Name']==plant]['Nameplate Capacity (MW)'].iloc[0])
+        # Thermal projects with generation data, but no plant data
+        print "{} thermal projects with data in the EIA923 form do not exist in the EIA860 registry:".format(
+            fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code']).value_counts()[False])
+        for plant in fuel_based_generation[~fuel_based_generation['Plant Code'].isin(fuel_based_gen_projects['Plant Code'])]['Plant Name']:
+            print "\t{}: {} MWh of generation".format(plant, fuel_based_generation[fuel_based_generation['Plant Name']==plant].filter(regex=r'(?i)netgen').sum(axis=1).sum())
 
         # Recover original column order
         hydro_generation = hydro_generation[column_order]
@@ -290,12 +288,13 @@ def parse_eia923_data(directory_list):
             fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
             on=['Plant Code','Prime Mover'], suffixes=('',''))
 
+        # Use regex filtering for this in case number of columns changes
         for i,m in enumerate(months):
             heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
             heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
             heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
 
-        # Get the best heat rate in a sepparate column (ignore negative values,
+        # Get the best heat rate in a separate column (ignore negative values,
         # which I think correspond to cogenerators)
         heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>=0].iloc[:,4:16].min(axis=1)
 
@@ -470,7 +469,7 @@ def filter_dataframe_by_region_id(df, region_id):
 
     df = df.loc[(df['Nerc Region'] == region_name) |
         ((df['County'].map(lambda c: str(c).title()).isin(
-            county_list+mispelled_counties)) & 
+            county_list+misspelled_counties)) & 
         (df['State'].isin(region_states)))] 
     
     df.reset_index(drop=True, inplace=True)
