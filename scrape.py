@@ -205,16 +205,10 @@ def parse_eia923_data(directory):
     print ("Read in EIA923 fuel and generation data for {} generation units "
            "and plants in the US.").format(len(generation))
 
-    # Replace characters with zeros when no value is provided
-    # Josiah: I'm wary of replacing blank values with 0's because blanks can
-    # mean no data is available, while 0 has a specific numeric meaning. I'm
-    # more comfortable using NaN's, and eventually filtering out those months.
-    # Is this ok?
+    # Replace characters with proper nan values
     numeric_columns = [col for col in generation.columns if 
         re.compile('(?i)elec[_\s]mmbtu').match(col) or re.compile('(?i)netgen').match(col)]
     for col in numeric_columns:
-#         generation[col].replace(' ', 0, inplace=True)
-#         generation[col].replace('.', 0, inplace=True)
         generation[col].replace(' ', float('nan'), inplace=True)
         generation[col].replace('.', float('nan'), inplace=True)
 
@@ -422,8 +416,8 @@ def parse_eia860_data(directory):
     # Replace chars in numeric columns with null values
     # Most appropriate way would be to replace value with another column
     for col in gen_data_to_be_summed:
-        generators[col].replace(' ', 0, inplace=True)
-        generators[col].replace('.', 0, inplace=True)
+        generators[col].replace(' ', float('nan'), inplace=True)
+        generators[col].replace('.', float('nan'), inplace=True)
 
     # Manually set Prime Mover of combined cycle plants before aggregation
     generators.loc[generators['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover'] = 'CC'
