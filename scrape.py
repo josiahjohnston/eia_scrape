@@ -117,11 +117,15 @@ def main():
 
     zip_file_list = scrape_eia860()
     unzip(zip_file_list)
-    parse_eia860_data([os.path.splitext(f)[0] for f in zip_file_list])
+    eia860_directory_list = [os.path.splitext(f)[0] for f in zip_file_list]
+    for eia860_annual_filing in eia860_directory_list:
+        parse_eia860_data(eia860_annual_filing)
 
     zip_file_list = scrape_eia923()
     unzip(zip_file_list)
-    parse_eia923_data([os.path.splitext(f)[0] for f in zip_file_list])
+    eia923_directory_list = [os.path.splitext(f)[0] for f in zip_file_list]
+    for eia923_annual_filing in eia923_directory_list:
+        parse_eia923_data(eia923_annual_filing)
 
 
 def scrape_eia860():
@@ -180,291 +184,289 @@ def scrape_eia923():
     return [os.path.join(unzip_directory, f) for f in file_list]
 
 
-def parse_eia923_data(directory_list):
-    for directory in directory_list:
-        year = int(directory[-4:])
-        print "============================="
-        print "Processing data for year {}.".format(year)
-        # Name of the relevant spreadsheet is not consistent throughout years
-        # Read largest file in the directory instead of looking by name
-        largest_file = max([os.path.join(directory, f)
-            for f in os.listdir(directory)], key=os.path.getsize)
-        if year >= 2011:
-            rows_to_skip = 5
-        else:
-            rows_to_skip = 7
-        generation = uniformize_names(pd.read_excel(largest_file,
-            sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
-        # Get column order for easier month matching later on
-        column_order = list(generation.columns)
-        # Remove "State-Fuel Level Increment" fictional plants
-        generation = generation.loc[generation['Plant Code']!=99999]
-        print ("Read in EIA923 fuel and generation data for {} generation units "
-               "and plants in the US.").format(len(generation))
+def parse_eia923_data(directory):
+    year = int(directory[-4:])
+    print "============================="
+    print "Processing data for year {}.".format(year)
+    # Name of the relevant spreadsheet is not consistent throughout years
+    # Read largest file in the directory instead of looking by name
+    largest_file = max([os.path.join(directory, f)
+        for f in os.listdir(directory)], key=os.path.getsize)
+    if year >= 2011:
+        rows_to_skip = 5
+    else:
+        rows_to_skip = 7
+    generation = uniformize_names(pd.read_excel(largest_file,
+        sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
+    # Get column order for easier month matching later on
+    column_order = list(generation.columns)
+    # Remove "State-Fuel Level Increment" fictional plants
+    generation = generation.loc[generation['Plant Code']!=99999]
+    print ("Read in EIA923 fuel and generation data for {} generation units "
+           "and plants in the US.").format(len(generation))
 
-        # Replace characters with zeros when no value is provided
-        # Josiah: I'm wary of replacing blank values with 0's because blanks can
-        # mean no data is available, while 0 has a specific numeric meaning. I'm
-        # more comfortable using NaN's, and eventually filtering out those months.
-        # Is this ok?
-        numeric_columns = [col for col in generation.columns if 
-            re.compile('(?i)elec[_\s]mmbtu').match(col) or re.compile('(?i)netgen').match(col)]
-        for col in numeric_columns:
-    #         generation[col].replace(' ', 0, inplace=True)
-    #         generation[col].replace('.', 0, inplace=True)
-            generation[col].replace(' ', float('nan'), inplace=True)
-            generation[col].replace('.', float('nan'), inplace=True)
+    # Replace characters with zeros when no value is provided
+    # Josiah: I'm wary of replacing blank values with 0's because blanks can
+    # mean no data is available, while 0 has a specific numeric meaning. I'm
+    # more comfortable using NaN's, and eventually filtering out those months.
+    # Is this ok?
+    numeric_columns = [col for col in generation.columns if 
+        re.compile('(?i)elec[_\s]mmbtu').match(col) or re.compile('(?i)netgen').match(col)]
+    for col in numeric_columns:
+#         generation[col].replace(' ', 0, inplace=True)
+#         generation[col].replace('.', 0, inplace=True)
+        generation[col].replace(' ', float('nan'), inplace=True)
+        generation[col].replace('.', float('nan'), inplace=True)
 
-        # Aggregated generation of plants. First assign CC as prime mover for combined cycles.
-        generation.loc[generation['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover']='CC'
-        gb = generation.groupby(['Plant Code','Prime Mover','Energy Source'])
-        generation = gb.agg({datum:('max' if datum not in numeric_columns else sum)
-                                        for datum in generation.columns})
-        hydro_generation = generation[generation['Energy Source']=='WAT']
-        fuel_based_generation = generation[generation['Prime Mover'].isin(fuel_prime_movers)]
-        print ("Aggregated generation data to {} generation plants through Plant "
-               "Code, Prime Mover and Energy Source.").format(len(generation))
-        print "\tHydro projects:{}".format(len(hydro_generation))
-        print "\tFuel based projects:{}".format(len(fuel_based_generation))
-        print "\tOther projects:{}".format(
-            len(generation) - len(fuel_based_generation) - len(hydro_generation))
+    # Aggregated generation of plants. First assign CC as prime mover for combined cycles.
+    generation.loc[generation['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover']='CC'
+    gb = generation.groupby(['Plant Code','Prime Mover','Energy Source'])
+    generation = gb.agg({datum:('max' if datum not in numeric_columns else sum)
+                                    for datum in generation.columns})
+    hydro_generation = generation[generation['Energy Source']=='WAT']
+    fuel_based_generation = generation[generation['Prime Mover'].isin(fuel_prime_movers)]
+    print ("Aggregated generation data to {} generation plants through Plant "
+           "Code, Prime Mover and Energy Source.").format(len(generation))
+    print "\tHydro projects:{}".format(len(hydro_generation))
+    print "\tFuel based projects:{}".format(len(fuel_based_generation))
+    print "\tOther projects:{}".format(
+        len(generation) - len(fuel_based_generation) - len(hydro_generation))
 
-        # Reload a summary of generation projects for nameplate capacity.
-        generation_projects = uniformize_names(pd.read_csv(
-            os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
-            sep='\t'))
-        print ("Read in processed EIA860 plant data for {} generation units in "
-               "the US").format(len(generation_projects))
-        gb = generation_projects.groupby(['Plant Code','Prime Mover','Operational Status'])
-        generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                        for datum in generation_projects.columns})
-        hydro_gen_projects = generation_projects[
-            (generation_projects['Operational Status']=='Operable') &
-            (generation_projects['Energy Source']=='WAT')]
-        fuel_based_gen_projects = generation_projects[
-            (generation_projects['Operational Status']=='Operable') &
-            (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
-        print ("Aggregated plant data into {} generation plants through Plant Code "
-               "and Prime Mover.").format(len(generation_projects))
-        print "\tHydro projects:{}".format(len(hydro_gen_projects))
-        print "\tFuel based projects:{}".format(len(fuel_based_gen_projects))
-        print "\tOther projects:{}".format(
-            len(generation_projects) - len(fuel_based_gen_projects) - len(hydro_gen_projects))
+    # Reload a summary of generation projects for nameplate capacity.
+    generation_projects = uniformize_names(pd.read_csv(
+        os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
+        sep='\t'))
+    print ("Read in processed EIA860 plant data for {} generation units in "
+           "the US").format(len(generation_projects))
+    gb = generation_projects.groupby(['Plant Code','Prime Mover','Operational Status'])
+    generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                                    for datum in generation_projects.columns})
+    hydro_gen_projects = generation_projects[
+        (generation_projects['Operational Status']=='Operable') &
+        (generation_projects['Energy Source']=='WAT')]
+    fuel_based_gen_projects = generation_projects[
+        (generation_projects['Operational Status']=='Operable') &
+        (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
+    print ("Aggregated plant data into {} generation plants through Plant Code "
+           "and Prime Mover.").format(len(generation_projects))
+    print "\tHydro projects:{}".format(len(hydro_gen_projects))
+    print "\tFuel based projects:{}".format(len(fuel_based_gen_projects))
+    print "\tOther projects:{}".format(
+        len(generation_projects) - len(fuel_based_gen_projects) - len(hydro_gen_projects))
 
-        # Cross-check data and print console messages with gaps.
-        def check_overlap_proj_and_production(projects, production, gen_type, log_path):
-            """
-            Look for generation projects from EIA860 that don't have production
-            data available from form EIA923 and vice versa. Print console messages
-            with summaries.
-            """
-            # Projects with plant data, but no production data
-            filter = projects['Plant Code'].isin(production['Plant Code'])
-            projects_missing_production = projects[~filter]
-            missing_MW = projects_missing_production['Nameplate Capacity (MW)'].sum()
-            total_MW = projects['Nameplate Capacity (MW)'].sum()
-            print ("{} of {} {} generation projects in the EIA860 plant form "
-                   "are not in the EIA923 form, {:.4f}% total {} capacity "
-                   "({:.0f} of {:.0f} MW)."
-                  ).format(
-                    len(projects_missing_production),
-                    len(projects),
-                    gen_type,
-                    100 * (missing_MW / total_MW),
-                    gen_type,
-                    missing_MW, total_MW,
-                  )
-            summary = projects_missing_production.groupby(['Plant Code', 'Plant Name']).sum()
-            summary['Net Generation (Megawatthours)'] = float('NaN')
-            summary.to_csv(log_path, 
-                columns=['Nameplate Capacity (MW)', 'Net Generation (Megawatthours)'])
-        
-            # Projects with generation data, but no plant data
-            filter = production['Plant Code'].isin(projects['Plant Code'])
-            production_missing_project = production[~filter]
-            missing_MWh = production_missing_project['Net Generation (Megawatthours)'].sum()
-            total_MWh = production['Net Generation (Megawatthours)'].sum()
-            print ("{} of {} {} generation projects in the EIA923 generation form "
-                   "are not in the EIA860 plant form: {:.4f}% "
-                   "total annual {} production ({:.0f} of {:.0f} MWh)."
-                  ).format(
-                    len(production_missing_project), len(production), 
-                    gen_type,
-                    100 * (missing_MWh / total_MWh),
-                    gen_type,
-                    missing_MWh, total_MWh, 
-                  )
-            summary = production_missing_project.groupby(['Plant Code', 'Plant Name']).sum()
-            summary['Nameplate Capacity (MW)'] = float('NaN')
-            summary.to_csv(log_path, mode='a', header=False, 
-                columns=['Nameplate Capacity (MW)', 'Net Generation (Megawatthours)'])
-            print ("Summarized {} plants with missing data to {}."
-                  ).format(gen_type, log_path)
-
-
-        # Check for projects that have plant data but no generation data, and vice versa
-        log_path = os.path.join(outputs_directory, 'incomplete_data_hydro_{}.csv'.format(year))
-        check_overlap_proj_and_production(hydro_gen_projects, hydro_generation,
-                                          'hydro', log_path)
-        log_path = os.path.join(outputs_directory, 'incomplete_data_thermal_{}.csv'.format(year))
-        check_overlap_proj_and_production(fuel_based_gen_projects, fuel_based_generation, 
-                                          'thermal', log_path)
-
-        # Recover original column order
-        hydro_generation = hydro_generation[column_order]
-        fuel_based_generation = fuel_based_generation[column_order]
-
-        # Save hydro profiles
-        hydro_outputs=pd.concat([
-            hydro_generation[['Plant Code','Plant Name','Prime Mover']],
-            hydro_generation.filter(regex=r'(?i)netgen')
-            ], axis=1)
-        hydro_outputs.loc[:,'Year']=year
-        hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
-            on=['Plant Code','Prime Mover'], suffixes=('',''))
-        for i,m in enumerate(months):
-            hydro_outputs.rename(columns={hydro_outputs.columns[3+i]:i+1}, inplace=True)
-            hydro_outputs.loc[:,i+1] = hydro_outputs.loc[:,i+1].div(months[m]*24*hydro_outputs['Nameplate Capacity (MW)'])
-        
-        # Save heat rate profiles
-        heat_rate_outputs=pd.concat([
-            fuel_based_generation[
-                ['Plant Code','Plant Name','Prime Mover','Energy Source']],
-                fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu'),
-                fuel_based_generation.filter(regex=r'(?i)netgen')
-            ], axis=1)
-        heat_rate_outputs.loc[:,'Year']=year
-        heat_rate_outputs=pd.merge(heat_rate_outputs,
-            fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
-            on=['Plant Code','Prime Mover'], suffixes=('',''))
-
-        # To Do: Use regex filtering for this in case number of columns changes
-        for i,m in enumerate(months):
-            heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
-            heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
-            heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
-
-        # Get the best heat rate in a separate column (ignore negative values,
-        # which I think correspond to cogenerators)
-        heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>=0].iloc[:,4:16].min(axis=1)
-
-        hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
-        write_hydro_output_header = not os.path.isfile(hydro_output_path)
-        with open(hydro_output_path, 'ab') as outfile:
-            hydro_outputs.to_csv(outfile, sep='\t', header=write_hydro_output_header, encoding='utf-8')
-        print "Saved hydro output data to {}.".format(hydro_output_path)
-
-        heat_rate_output_path = os.path.join(outputs_directory,'historic_heat_rates.tab')
-        write_heat_rates_header = not os.path.isfile(heat_rate_output_path)
-        with open(heat_rate_output_path, 'ab') as outfile:
-            heat_rate_outputs.to_csv(outfile, sep='\t', header=write_heat_rates_header, encoding='utf-8')
-        print "Saved heat rate data to {}.\n".format(heat_rate_output_path)
+    # Cross-check data and print console messages with gaps.
+    def check_overlap_proj_and_production(projects, production, gen_type, log_path):
+        """
+        Look for generation projects from EIA860 that don't have production
+        data available from form EIA923 and vice versa. Print console messages
+        with summaries.
+        """
+        # Projects with plant data, but no production data
+        filter = projects['Plant Code'].isin(production['Plant Code'])
+        projects_missing_production = projects[~filter]
+        missing_MW = projects_missing_production['Nameplate Capacity (MW)'].sum()
+        total_MW = projects['Nameplate Capacity (MW)'].sum()
+        print ("{} of {} {} generation projects in the EIA860 plant form "
+               "are not in the EIA923 form, {:.4f}% total {} capacity "
+               "({:.0f} of {:.0f} MW)."
+              ).format(
+                len(projects_missing_production),
+                len(projects),
+                gen_type,
+                100 * (missing_MW / total_MW),
+                gen_type,
+                missing_MW, total_MW,
+              )
+        summary = projects_missing_production.groupby(['Plant Code', 'Plant Name']).sum()
+        summary['Net Generation (Megawatthours)'] = float('NaN')
+        summary.to_csv(log_path, 
+            columns=['Nameplate Capacity (MW)', 'Net Generation (Megawatthours)'])
+    
+        # Projects with generation data, but no plant data
+        filter = production['Plant Code'].isin(projects['Plant Code'])
+        production_missing_project = production[~filter]
+        missing_MWh = production_missing_project['Net Generation (Megawatthours)'].sum()
+        total_MWh = production['Net Generation (Megawatthours)'].sum()
+        print ("{} of {} {} generation projects in the EIA923 generation form "
+               "are not in the EIA860 plant form: {:.4f}% "
+               "total annual {} production ({:.0f} of {:.0f} MWh)."
+              ).format(
+                len(production_missing_project), len(production), 
+                gen_type,
+                100 * (missing_MWh / total_MWh),
+                gen_type,
+                missing_MWh, total_MWh, 
+              )
+        summary = production_missing_project.groupby(['Plant Code', 'Plant Name']).sum()
+        summary['Nameplate Capacity (MW)'] = float('NaN')
+        summary.to_csv(log_path, mode='a', header=False, 
+            columns=['Nameplate Capacity (MW)', 'Net Generation (Megawatthours)'])
+        print ("Summarized {} plants with missing data to {}."
+              ).format(gen_type, log_path)
 
 
-def parse_eia860_data(directory_list):
-    for directory in directory_list:
-        year = int(directory[-4:])
-        print "============================="
-        print "Processing data for year {}.".format(year)
+    # Check for projects that have plant data but no generation data, and vice versa
+    log_path = os.path.join(outputs_directory, 'incomplete_data_hydro_{}.csv'.format(year))
+    check_overlap_proj_and_production(hydro_gen_projects, hydro_generation,
+                                      'hydro', log_path)
+    log_path = os.path.join(outputs_directory, 'incomplete_data_thermal_{}.csv'.format(year))
+    check_overlap_proj_and_production(fuel_based_gen_projects, fuel_based_generation, 
+                                      'thermal', log_path)
 
-        # Different number of blank rows depending on year
-        if year <= 2010:
-            rows_to_skip = 0
-        else:
-            rows_to_skip = 1
+    # Recover original column order
+    hydro_generation = hydro_generation[column_order]
+    fuel_based_generation = fuel_based_generation[column_order]
 
-        for f in os.listdir(directory):
-            path = os.path.join(directory, f)
-            # Use a simple for loop, since for years previous to 2008, there are
-            # multiple ocurrences of "GenY" in files. Haven't found a clever way
-            # to do a pattern search with Glob that excludes unwanted files.
-            # In any case, all files are read differently with Pandas, so I'm not
-            # sure that the code would become any cleaner by using Glob.
+    # Save hydro profiles
+    hydro_outputs=pd.concat([
+        hydro_generation[['Plant Code','Plant Name','Prime Mover']],
+        hydro_generation.filter(regex=r'(?i)netgen')
+        ], axis=1)
+    hydro_outputs.loc[:,'Year']=year
+    hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+        on=['Plant Code','Prime Mover'], suffixes=('',''))
+    for i,m in enumerate(months):
+        hydro_outputs.rename(columns={hydro_outputs.columns[3+i]:i+1}, inplace=True)
+        hydro_outputs.loc[:,i+1] = hydro_outputs.loc[:,i+1].div(months[m]*24*hydro_outputs['Nameplate Capacity (MW)'])
+    
+    # Save heat rate profiles
+    heat_rate_outputs=pd.concat([
+        fuel_based_generation[
+            ['Plant Code','Plant Name','Prime Mover','Energy Source']],
+            fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu'),
+            fuel_based_generation.filter(regex=r'(?i)netgen')
+        ], axis=1)
+    heat_rate_outputs.loc[:,'Year']=year
+    heat_rate_outputs=pd.merge(heat_rate_outputs,
+        fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+        on=['Plant Code','Prime Mover'], suffixes=('',''))
 
-            # From 2009 onwards, look for files with "Plant" and "Generator" in its
-            # name.
-            # Avoid trying to read a temporal file if any Excel workbook is open
-            if 'Plant' in f and '~' not in f:
-                plants = uniformize_names(
-                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-            if 'Generator' in f and '~' not in f:
-                existing_generators = uniformize_names(
-                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-                existing_generators['Operational Status'] = 'Operable'
-                proposed_generators = uniformize_names(
-                    pd.read_excel(path, sheetname=1, skiprows=rows_to_skip))
-                proposed_generators['Operational Status'] = 'Proposed'
-            # Different names from 2008 backwards
-            if f.startswith('PRGenY'):
-                proposed_generators = uniformize_names(
-                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-                proposed_generators['Operational Status'] = 'Proposed'
-            if f.startswith('GenY'):
-                existing_generators = uniformize_names(
-                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-                existing_generators['Operational Status'] = 'Operable'
-        generators = pd.merge(existing_generators, plants,
-            on=['Utility Id','Plant Code', 'Plant Name','State'],
-            suffixes=('_units', ''))
-        generators = generators.append(proposed_generators)
-        print "Read in data for {} existing and {} proposed generation units in "\
-            "the US.".format(len(existing_generators), len(proposed_generators))
+    # To Do: Use regex filtering for this in case number of columns changes
+    for i,m in enumerate(months):
+        heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
+        heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
+        heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
 
-        # Filter projects according to status
-        generators = generators.loc[generators['Status'].isin(accepted_status_codes)]
-        print "Filtered to {} existing and {} proposed generation units by removing inactive "\
-            "and planned projects not yet started.".format(
-                len(generators[generators['Operational Status']=='Operable']),
-                len(generators[generators['Operational Status']=='Proposed']))
+    # Get the best heat rate in a separate column (ignore negative values,
+    # which I think correspond to cogenerators)
+    heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>=0].iloc[:,4:16].min(axis=1)
 
-        # Replace chars in numeric columns with null values
-        # Most appropriate way would be to replace value with another column
-        for col in gen_data_to_be_summed:
-            generators[col].replace(' ', 0, inplace=True)
-            generators[col].replace('.', 0, inplace=True)
+    hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
+    write_hydro_output_header = not os.path.isfile(hydro_output_path)
+    with open(hydro_output_path, 'ab') as outfile:
+        hydro_outputs.to_csv(outfile, sep='\t', header=write_hydro_output_header, encoding='utf-8')
+    print "Saved hydro output data to {}.".format(hydro_output_path)
 
-        # Manually set Prime Mover of combined cycle plants before aggregation
-        generators.loc[generators['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover'] = 'CC'
+    heat_rate_output_path = os.path.join(outputs_directory,'historic_heat_rates.tab')
+    write_heat_rates_header = not os.path.isfile(heat_rate_output_path)
+    with open(heat_rate_output_path, 'ab') as outfile:
+        heat_rate_outputs.to_csv(outfile, sep='\t', header=write_heat_rates_header, encoding='utf-8')
+    print "Saved heat rate data to {}.\n".format(heat_rate_output_path)
 
-        # Aggregate according to user criteria
-        for agg_list in gen_aggregation_lists:
-            # Assign unique values to empty cells in columns that will be aggregated upon
-            for col in agg_list:
-                if generators[col].dtype == np.float64:
-                    generators[col].fillna(
-                        {i:10000000+i for i in generators.index}, inplace=True)
-                else:
-                    generators[col].fillna(
-                        {i:'None'+str(i) for i in generators.index}, inplace=True)
-            gb = generators.groupby(agg_list)
-            # Some columns will be summed and all others will get the 'max' value
-            # Columns are reordered after aggregation for easier inspection
-            if year != end_year:
-                generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                for datum in gen_relevant_data}).loc[:,gen_relevant_data]
+
+def parse_eia860_data(directory):
+    year = int(directory[-4:])
+    print "============================="
+    print "Processing data for year {}.".format(year)
+
+    # Different number of blank rows depending on year
+    if year <= 2010:
+        rows_to_skip = 0
+    else:
+        rows_to_skip = 1
+
+    for f in os.listdir(directory):
+        path = os.path.join(directory, f)
+        # Use a simple for loop, since for years previous to 2008, there are
+        # multiple ocurrences of "GenY" in files. Haven't found a clever way
+        # to do a pattern search with Glob that excludes unwanted files.
+        # In any case, all files are read differently with Pandas, so I'm not
+        # sure that the code would become any cleaner by using Glob.
+
+        # From 2009 onwards, look for files with "Plant" and "Generator" in its
+        # name.
+        # Avoid trying to read a temporal file if any Excel workbook is open
+        if 'Plant' in f and '~' not in f:
+            plants = uniformize_names(
+                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+        if 'Generator' in f and '~' not in f:
+            existing_generators = uniformize_names(
+                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+            existing_generators['Operational Status'] = 'Operable'
+            proposed_generators = uniformize_names(
+                pd.read_excel(path, sheetname=1, skiprows=rows_to_skip))
+            proposed_generators['Operational Status'] = 'Proposed'
+        # Different names from 2008 backwards
+        if f.startswith('PRGenY'):
+            proposed_generators = uniformize_names(
+                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+            proposed_generators['Operational Status'] = 'Proposed'
+        if f.startswith('GenY'):
+            existing_generators = uniformize_names(
+                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+            existing_generators['Operational Status'] = 'Operable'
+    generators = pd.merge(existing_generators, plants,
+        on=['Utility Id','Plant Code', 'Plant Name','State'],
+        suffixes=('_units', ''))
+    generators = generators.append(proposed_generators)
+    print "Read in data for {} existing and {} proposed generation units in "\
+        "the US.".format(len(existing_generators), len(proposed_generators))
+
+    # Filter projects according to status
+    generators = generators.loc[generators['Status'].isin(accepted_status_codes)]
+    print "Filtered to {} existing and {} proposed generation units by removing inactive "\
+        "and planned projects not yet started.".format(
+            len(generators[generators['Operational Status']=='Operable']),
+            len(generators[generators['Operational Status']=='Proposed']))
+
+    # Replace chars in numeric columns with null values
+    # Most appropriate way would be to replace value with another column
+    for col in gen_data_to_be_summed:
+        generators[col].replace(' ', 0, inplace=True)
+        generators[col].replace('.', 0, inplace=True)
+
+    # Manually set Prime Mover of combined cycle plants before aggregation
+    generators.loc[generators['Prime Mover'].isin(['CA','CT','CS']),'Prime Mover'] = 'CC'
+
+    # Aggregate according to user criteria
+    for agg_list in gen_aggregation_lists:
+        # Assign unique values to empty cells in columns that will be aggregated upon
+        for col in agg_list:
+            if generators[col].dtype == np.float64:
+                generators[col].fillna(
+                    {i:10000000+i for i in generators.index}, inplace=True)
             else:
-                generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
-                                for datum in gen_relevant_data+gen_relevant_data_for_last_year}).loc[
-                                :,gen_relevant_data+gen_relevant_data_for_last_year]
-            generators.reset_index(drop=True, inplace=True)
-            print "Aggregated to {} existing and {} new generation units by aggregating "\
-                "through {}.".format(len(generators[generators['Operational Status']=='Operable']),
-                len(generators[generators['Operational Status']=='Proposed']), agg_list)
+                generators[col].fillna(
+                    {i:'None'+str(i) for i in generators.index}, inplace=True)
+        gb = generators.groupby(agg_list)
+        # Some columns will be summed and all others will get the 'max' value
+        # Columns are reordered after aggregation for easier inspection
+        if year != end_year:
+            generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                            for datum in gen_relevant_data}).loc[:,gen_relevant_data]
+        else:
+            generators = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
+                            for datum in gen_relevant_data+gen_relevant_data_for_last_year}).loc[
+                            :,gen_relevant_data+gen_relevant_data_for_last_year]
+        generators.reset_index(drop=True, inplace=True)
+        print "Aggregated to {} existing and {} new generation units by aggregating "\
+            "through {}.".format(len(generators[generators['Operational Status']=='Operable']),
+            len(generators[generators['Operational Status']=='Proposed']), agg_list)
 
-        # Write some columns as ints for easier inspection
-        generators = generators.astype(
-            {c: int for c in ['Operating Year', 'Plant Code']})
-        # Drop columns that are no longer needed
-        generators = generators.drop(['Unit Code','Generator Id'], axis=1)
-        # Add EIA prefix to be explicit about code origin
-        generators = generators.rename(columns={'Plant Code':'EIA Plant Code'})
+    # Write some columns as ints for easier inspection
+    generators = generators.astype(
+        {c: int for c in ['Operating Year', 'Plant Code']})
+    # Drop columns that are no longer needed
+    generators = generators.drop(['Unit Code','Generator Id'], axis=1)
+    # Add EIA prefix to be explicit about code origin
+    generators = generators.rename(columns={'Plant Code':'EIA Plant Code'})
 
-        if not os.path.exists(outputs_directory):
-            os.makedirs(outputs_directory)
-        fname = 'generation_projects_{}.tab'.format(year)
-        with open(os.path.join(outputs_directory, fname),'w') as f:
-            generators.to_csv(f, sep='\t', encoding='utf-8', index=False)
-        print "Saved data to {} file.\n".format(fname)
+    if not os.path.exists(outputs_directory):
+        os.makedirs(outputs_directory)
+    fname = 'generation_projects_{}.tab'.format(year)
+    with open(os.path.join(outputs_directory, fname),'w') as f:
+        generators.to_csv(f, sep='\t', encoding='utf-8', index=False)
+    print "Saved data to {} file.\n".format(fname)
 
 
 def assign_counties_to_region(region_id, area=0.5):
