@@ -235,7 +235,7 @@ def parse_eia923_data(directory_list):
             sep='\t'))
         print ("Read in processed EIA860 plant data for {} generation units in "
                "the US").format(len(generation_projects))
-        gb = generation_projects.groupby(['Plant Code','Prime Mover'])
+        gb = generation_projects.groupby(['Plant Code','Prime Mover','Operational Status'])
         generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                         for datum in generation_projects.columns})
         hydro_gen_projects = generation_projects[
