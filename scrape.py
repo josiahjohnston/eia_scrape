@@ -15,10 +15,7 @@ All data is scrapped and parsed from 2004 onwards.
 
 To Do:
 Better error checks.
-More QA/QC on output.
-Print hydro capacity factors and heat rates in "short format", so that .tab files
-can be easily uploaded to the database. Do this IN ADDITION to current outputs,
-so that manual inspection can be easily done in the "long format" files.
+Add Netgen column to outputs.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
 Write a report with assumptions taken and observations noticed during the writing
@@ -30,6 +27,7 @@ of these scripts and data analysis.
 import csv, os, re
 import numpy as np
 import pandas as pd
+from calendar import monthrange
 
 # Update the reference to the utils module after this becomes a package
 from utils import download_file, download_metadata_fields, unzip
@@ -58,19 +56,6 @@ gen_relevant_data_for_last_year = ['Time From Cold Shutdown To Full Load',
                         'Latitude','Longitude','Balancing Authority Name',
                         'Grid Voltage (kV)', 'Carbon Capture Technology']
 gen_data_to_be_summed_for_last_year = ['Minimum Load (MW)']
-months = {
-    'January':31,
-    'February':28,
-    'March':31,
-    'April':30,
-    'May':31,
-    'June':30,
-    'July':31,
-    'August':31,
-    'September':30,
-    'October':31,
-    'November':30,
-    'December':31}
 misspelled_counties = [
     'Claveras'
     ]
@@ -192,12 +177,14 @@ def parse_eia923_data(directory):
     # Read largest file in the directory instead of looking by name
     largest_file = max([os.path.join(directory, f)
         for f in os.listdir(directory)], key=os.path.getsize)
+    # Different number of blank rows depending on year
     if year >= 2011:
         rows_to_skip = 5
     else:
         rows_to_skip = 7
     generation = uniformize_names(pd.read_excel(largest_file,
         sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
+    generation.loc[:,'Year'] = year
     # Get column order for easier month matching later on
     column_order = list(generation.columns)
     # Remove "State-Fuel Level Increment" fictional plants
@@ -275,7 +262,7 @@ def parse_eia923_data(directory):
         summary['Net Generation (Megawatthours)'] = float('NaN')
         summary.to_csv(log_path, 
             columns=['Nameplate Capacity (MW)', 'Net Generation (Megawatthours)'])
-    
+
         # Projects with generation data, but no plant data
         filter = production['Plant Code'].isin(projects['Plant Code'])
         production_missing_project = production[~filter]
@@ -311,51 +298,151 @@ def parse_eia923_data(directory):
     hydro_generation = hydro_generation[column_order]
     fuel_based_generation = fuel_based_generation[column_order]
 
+    def append_historic_output_to_csv(fname, df):
+        output_path = os.path.join(outputs_directory, fname)
+        write_header = not os.path.isfile(output_path)
+        with open(output_path, 'ab') as outfile:
+            df.to_csv(outfile, sep='\t', header=write_header, encoding='utf-8', index=False)
+
+    #############################
     # Save hydro profiles
+
+    def df_to_long_format(df, col_name, month, index_cols):
+        return pd.melt(df, index_cols, '{} Month {}'.format(col_name, month)
+            ).drop('variable',axis=1).rename(columns={'value':col_name})
+
+    ###############
+    # WIDE format
     hydro_outputs=pd.concat([
-        hydro_generation[['Plant Code','Plant Name','Prime Mover']],
+        hydro_generation[['Year','Plant Code','Plant Name','Prime Mover']],
         hydro_generation.filter(regex=r'(?i)netgen')
         ], axis=1)
-    hydro_outputs.loc[:,'Year']=year
     hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
         on=['Plant Code','Prime Mover'], suffixes=('',''))
-    for i,m in enumerate(months):
-        hydro_outputs.rename(columns={hydro_outputs.columns[3+i]:i+1}, inplace=True)
-        hydro_outputs.loc[:,i+1] = hydro_outputs.loc[:,i+1].div(months[m]*24*hydro_outputs['Nameplate Capacity (MW)'])
-    
+    for month in range(1,13):
+        hydro_outputs.rename(
+            columns={hydro_outputs.columns[3+month]:'Capacity Factor Month {}'.format(month)},
+            inplace=True)
+        hydro_outputs.loc[:,'Capacity Factor Month {}'.format(month)] = \
+            hydro_outputs.loc[:,'Capacity Factor Month {}'.format(month)].div(
+            monthrange(int(year),month)[1]*24*hydro_outputs['Nameplate Capacity (MW)'])
+
+    append_historic_output_to_csv('historic_hydro_capacity_factors_WIDE.tab', hydro_outputs)
+    print "Saved hydro capacity factor data in wide format for {}.".format(year)
+
+    ###############
+    # NARROW format
+    index_columns = [
+            'Year',
+            'Plant Code',
+            'Plant Name',
+            'Prime Mover'
+        ]
+    hydro_outputs_narrow = pd.DataFrame(columns=['Month'])
+    for month in range(1,13):
+        hydro_outputs_narrow = pd.concat([
+            hydro_outputs_narrow,
+            df_to_long_format(hydro_outputs, 'Capacity Factor', month, index_columns)
+            ], axis=0)
+        hydro_outputs_narrow.loc[:,'Month'].fillna(month, inplace=True)
+
+    # Get friendlier output
+    hydro_outputs_narrow = hydro_outputs_narrow[['Month', 'Year',
+            'Plant Code', 'Plant Name', 'Prime Mover', 'Capacity Factor']]
+    hydro_outputs_narrow = hydro_outputs_narrow.astype(
+            {c: int for c in ['Month', 'Year', 'Plant Code']})
+
+    append_historic_output_to_csv('historic_hydro_capacity_factors_NARROW.tab', hydro_outputs_narrow)
+    print "Saved hydro capacity factor data in narrow format for {}.".format(year)
+
+    #############################
     # Save heat rate profiles
+
+    ###############
+    # WIDE format
     heat_rate_outputs=pd.concat([
         fuel_based_generation[
-            ['Plant Code','Plant Name','Prime Mover','Energy Source']],
+            ['Plant Code','Plant Name','Prime Mover','Energy Source','Year']],
             fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu'),
             fuel_based_generation.filter(regex=r'(?i)netgen')
         ], axis=1)
-    heat_rate_outputs.loc[:,'Year']=year
     heat_rate_outputs=pd.merge(heat_rate_outputs,
         fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
         on=['Plant Code','Prime Mover'], suffixes=('',''))
 
+    # Get total fuel consumption per plant and prime mover
+    total_fuel_consumption = pd.concat([
+            fuel_based_generation[
+                ['Plant Code','Prime Mover']],
+                fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu')
+            ], axis=1)
+    total_fuel_consumption.rename(columns={
+        total_fuel_consumption.columns[1+m]:'Fraction of Total Fuel Consumption Month {}'.format(m)
+        for m in range(1,13)}, inplace=True)
+    total_fuel_consumption_columns = list(total_fuel_consumption.columns)
+    gb = total_fuel_consumption.groupby(['Plant Code','Prime Mover'])
+    total_fuel_consumption = gb.agg({col:('max' if col in ['Plant Code','Prime Mover'] else sum)
+                                    for col in total_fuel_consumption_columns}).reset_index(drop=True)
+    total_fuel_consumption = total_fuel_consumption[total_fuel_consumption_columns]
+    heat_rate_outputs=pd.merge(heat_rate_outputs, total_fuel_consumption,
+            on=['Plant Code','Prime Mover'], suffixes=('',''))
+
     # To Do: Use regex filtering for this in case number of columns changes
-    for i,m in enumerate(months):
-        heat_rate_outputs.rename(columns={heat_rate_outputs.columns[4+i]:i+1}, inplace=True)
-        heat_rate_outputs.iloc[:,i+4] = heat_rate_outputs.iloc[:,i+4].div(heat_rate_outputs.iloc[:,16])
-        heat_rate_outputs.drop(heat_rate_outputs.columns[16], axis=1, inplace=True)
+    for month in range(1,13):
+        heat_rate_outputs.rename(
+            columns={heat_rate_outputs.columns[4+month]:'Heat Rate Month {}'.format(month)},
+            inplace=True)
+        # Calculate fraction of total fuel use
+        heat_rate_outputs.loc[:,'Fraction of Total Fuel Consumption Month {}'.format(month)] = \
+            heat_rate_outputs.iloc[:,month+4].div(
+            heat_rate_outputs.loc[:,'Fraction of Total Fuel Consumption Month {}'.format(month)])
+        # Heat rates
+        heat_rate_outputs.iloc[:,month+4] = heat_rate_outputs.iloc[:,month+4].div(heat_rate_outputs.iloc[:,17])
+        # Capacity factors
+        heat_rate_outputs['Capacity Factor Month {}'.format(month)] = \
+            heat_rate_outputs.iloc[:,17].div(
+                monthrange(int(year),month)[1]*24*heat_rate_outputs['Nameplate Capacity (MW)'])
+        # Drop the netgen column for this month
+        heat_rate_outputs.drop(heat_rate_outputs.columns[17], axis=1, inplace=True)
 
-    # Get the best heat rate in a separate column (ignore negative values,
-    # which I think correspond to cogenerators)
-    heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>=0].iloc[:,4:16].min(axis=1)
+    # Get the best heat rate in a separate column
+    heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>0].iloc[:,5:17].min(axis=1)
 
-    hydro_output_path = os.path.join(outputs_directory,'historic_hydro_output.tab')
-    write_hydro_output_header = not os.path.isfile(hydro_output_path)
-    with open(hydro_output_path, 'ab') as outfile:
-        hydro_outputs.to_csv(outfile, sep='\t', header=write_hydro_output_header, encoding='utf-8')
-    print "Saved hydro output data to {}.".format(hydro_output_path)
+    append_historic_output_to_csv('historic_heat_rates_WIDE.tab', heat_rate_outputs)
+    print "Saved heat rate data in wide format for {}.".format(year)
 
-    heat_rate_output_path = os.path.join(outputs_directory,'historic_heat_rates.tab')
-    write_heat_rates_header = not os.path.isfile(heat_rate_output_path)
-    with open(heat_rate_output_path, 'ab') as outfile:
-        heat_rate_outputs.to_csv(outfile, sep='\t', header=write_heat_rates_header, encoding='utf-8')
-    print "Saved heat rate data to {}.\n".format(heat_rate_output_path)
+    ###############
+    # NARROW format
+    index_columns = [
+            'Year',
+            'Plant Code',
+            'Plant Name',
+            'Prime Mover',
+            'Energy Source'
+        ]
+    heat_rate_outputs_narrow = pd.DataFrame(columns=['Month'])
+    for month in range(1,13):
+        heat_rate_outputs_narrow = pd.concat([
+            heat_rate_outputs_narrow,
+            pd.merge(
+                pd.merge(
+                    df_to_long_format(heat_rate_outputs, 'Heat Rate', month, index_columns),
+                    df_to_long_format(heat_rate_outputs, 'Capacity Factor', month, index_columns),
+                    on=index_columns),
+                df_to_long_format(heat_rate_outputs, 'Fraction of Total Fuel Consumption', month, index_columns),
+                on=index_columns)
+            ], axis=0)
+        heat_rate_outputs_narrow.loc[:,'Month'].fillna(month, inplace=True)
+
+    # Get friendlier output
+    heat_rate_outputs_narrow = heat_rate_outputs_narrow[['Month', 'Year',
+            'Plant Code', 'Plant Name', 'Prime Mover', 'Energy Source',
+            'Heat Rate', 'Capacity Factor', 'Fraction of Total Fuel Consumption']]
+    heat_rate_outputs_narrow = heat_rate_outputs_narrow.astype(
+            {c: int for c in ['Month', 'Year', 'Plant Code']})
+
+    append_historic_output_to_csv('historic_heat_rates_NARROW.tab', heat_rate_outputs_narrow)
+    print "Saved heat rate data in narrow format for {}.".format(year)
 
 
 def parse_eia860_data(directory):
