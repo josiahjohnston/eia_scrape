@@ -15,6 +15,7 @@ All data is scrapped and parsed from 2004 onwards.
 
 To Do:
 Better error checks.
+Check cogen plants.
 Add Netgen column to outputs.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.

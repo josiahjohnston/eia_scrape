@@ -66,19 +66,12 @@ def connect_to_db_and_run_query(query, database='postgres', host='localhost', po
         cur.execute(query)
         # fetchall() returns a list of tuples with the rows resulting from the query
         output = cur.fetchall()
-        if cur:
-            cur.close()
-        if con:
-            con.close()
-            print 'Successfully executed query: returning results.'
-            print 'Closed database connection.'
+        print 'Successfully executed query: returning results.'
         return output
     except:
-        if cur:
-            cur.close()
-        if con:
-            con.close()
-            print 'Query execution failed.'
-            print 'Closed database connection.'
+        print 'Query execution failed.'
         return None
+    cur.close()
+    con.close()
+    print 'Database connection closed.'
     
