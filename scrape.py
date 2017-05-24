@@ -16,7 +16,6 @@ All data is scrapped and parsed from 2004 onwards.
 To Do:
 Better error checks.
 Check cogen plants.
-Add Netgen column to outputs.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
 Write a report with assumptions taken and observations noticed during the writing
@@ -45,7 +44,7 @@ outputs_directory = 'processed_data'
 download_log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
 CLEAR_PRIOR_OUTPUTS = True
-start_year, end_year = 2011,2015
+start_year, end_year = 2015,2015
 fuel_prime_movers = ['ST','GT','IC','CA','CT','CS','CC']
 region_states = ['WA','OR','CA','AZ','NV','NM','UT','ID','MT','WY','CO','TX']
 accepted_status_codes = ['OP','SB','CO','SC','OA','OZ','TS','L','T','U','V']
@@ -328,10 +327,10 @@ def parse_eia923_data(directory):
         on=['Plant Code','Prime Mover'], suffixes=('',''))
     for month in range(1,13):
         hydro_outputs.rename(
-            columns={hydro_outputs.columns[3+month]:'Capacity Factor Month {}'.format(month)},
+            columns={hydro_outputs.columns[3+month]:'Net Electricity Generation (MWh) Month {}'.format(month)},
             inplace=True)
         hydro_outputs.loc[:,'Capacity Factor Month {}'.format(month)] = \
-            hydro_outputs.loc[:,'Capacity Factor Month {}'.format(month)].div(
+            hydro_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)].div(
             monthrange(int(year),month)[1]*24*hydro_outputs['Nameplate Capacity (MW)'])
 
     append_historic_output_to_csv('historic_hydro_capacity_factors_WIDE.tab', hydro_outputs)
@@ -349,13 +348,17 @@ def parse_eia923_data(directory):
     for month in range(1,13):
         hydro_outputs_narrow = pd.concat([
             hydro_outputs_narrow,
-            df_to_long_format(hydro_outputs, 'Capacity Factor', month, index_columns)
+            pd.merge(
+                df_to_long_format(hydro_outputs, 'Capacity Factor', month, index_columns),
+                df_to_long_format(hydro_outputs, 'Net Electricity Generation (MWh)', month, index_columns),
+                on=index_columns)
             ], axis=0)
         hydro_outputs_narrow.loc[:,'Month'].fillna(month, inplace=True)
 
     # Get friendlier output
     hydro_outputs_narrow = hydro_outputs_narrow[['Month', 'Year',
-            'Plant Code', 'Plant Name', 'Prime Mover', 'Capacity Factor']]
+            'Plant Code', 'Plant Name', 'Prime Mover', 'Capacity Factor',
+            'Net Electricity Generation (MWh)']]
     hydro_outputs_narrow = hydro_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
@@ -399,18 +402,21 @@ def parse_eia923_data(directory):
         heat_rate_outputs.rename(
             columns={heat_rate_outputs.columns[4+month]:'Heat Rate Month {}'.format(month)},
             inplace=True)
+        heat_rate_outputs.rename(
+            columns={heat_rate_outputs.columns[16+month]:'Net Electricity Generation (MWh) Month {}'.format(month)},
+            inplace=True)
         # Calculate fraction of total fuel use
         heat_rate_outputs.loc[:,'Fraction of Total Fuel Consumption Month {}'.format(month)] = \
             heat_rate_outputs.iloc[:,month+4].div(
             heat_rate_outputs.loc[:,'Fraction of Total Fuel Consumption Month {}'.format(month)])
         # Heat rates
-        heat_rate_outputs.iloc[:,month+4] = heat_rate_outputs.iloc[:,month+4].div(heat_rate_outputs.iloc[:,17])
+        heat_rate_outputs.loc[:,'Heat Rate Month {}'.format(month)] = \
+            heat_rate_outputs.loc[:,'Heat Rate Month {}'.format(month)].div(
+                heat_rate_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)])
         # Capacity factors
         heat_rate_outputs['Capacity Factor Month {}'.format(month)] = \
-            heat_rate_outputs.iloc[:,17].div(
+            heat_rate_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)].div(
                 monthrange(int(year),month)[1]*24*heat_rate_outputs['Nameplate Capacity (MW)'])
-        # Drop the netgen column for this month
-        heat_rate_outputs.drop(heat_rate_outputs.columns[17], axis=1, inplace=True)
 
     # Get the best heat rate in a separate column
     heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>0].iloc[:,5:17].min(axis=1)
@@ -429,12 +435,16 @@ def parse_eia923_data(directory):
         ]
     heat_rate_outputs_narrow = pd.DataFrame(columns=['Month'])
     for month in range(1,13):
+        # To Do: Collapse the mergers into a more compact function
         heat_rate_outputs_narrow = pd.concat([
             heat_rate_outputs_narrow,
             pd.merge(
                 pd.merge(
-                    df_to_long_format(heat_rate_outputs, 'Heat Rate', month, index_columns),
-                    df_to_long_format(heat_rate_outputs, 'Capacity Factor', month, index_columns),
+                    pd.merge(
+                        df_to_long_format(heat_rate_outputs, 'Heat Rate', month, index_columns),
+                        df_to_long_format(heat_rate_outputs, 'Capacity Factor', month, index_columns),
+                    on=index_columns),
+                    df_to_long_format(heat_rate_outputs, 'Net Electricity Generation (MWh)', month, index_columns),
                     on=index_columns),
                 df_to_long_format(heat_rate_outputs, 'Fraction of Total Fuel Consumption', month, index_columns),
                 on=index_columns)
@@ -444,7 +454,8 @@ def parse_eia923_data(directory):
     # Get friendlier output
     heat_rate_outputs_narrow = heat_rate_outputs_narrow[['Month', 'Year',
             'Plant Code', 'Plant Name', 'Prime Mover', 'Energy Source',
-            'Heat Rate', 'Capacity Factor', 'Fraction of Total Fuel Consumption']]
+            'Heat Rate', 'Capacity Factor', 'Fraction of Total Fuel Consumption',
+            'Net Electricity Generation (MWh)']]
     heat_rate_outputs_narrow = heat_rate_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
