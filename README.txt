@@ -1,5 +1,5 @@
-Scrape data on existing and planned generators in the United States from the
-Energy Information Agency to update the catalog for the Switch-WECC database.
+Scrape project and production data on existing and planned generators in the
+United States from the Energy Information Agency for several years.
 
 
 TABLE OF CONTENTS
@@ -13,20 +13,19 @@ FILE LAYOUT
 pip_requirements.txt is a working list of requirements. It needs to get moved
 to a setup.py file.
 
-Most of the code is currently in scrape.py which may later get renamed to
-eia860.py. The organization of this package will be fluid while its
-functionality gets sorted out. Functions for downloading files in an
+Most of the code is currently in scrape.py which may later get re-organized as a package. Functions for downloading files in an
 archive-safe manner and unzipping files are in utils.py. These should get 
 migrated into a package that lives in a subdirectory.
 
-I initially pulled other_dat/*.txt files from pdfs manually, but later found
-them in some excel files (I don't remember which ones). Their extraction and
-save should get automated, and they should live in the directory with other
-auto-extracted files - either downloads or a new directory for intermediate
-outputs.
+The codes located in other_dat/* were manually extracted from the latest
+"Layout" Excel workbook from the EIA860 form. Their extraction and save should
+get automated, and they should live in the directory with other auto-extracted
+files - either downloads or a new directory for intermediate outputs.
 
 
 GOALS
+
+To provide useful generation project data for power system modeling.
 
 Download and archive data in a way that can detect future changes to the
 upstream repository (i.e. if the federal datasets are tampered with). We will
@@ -34,55 +33,52 @@ use a subset of the data for the moment, but would like to keep the remaining
 data available for future work, especially since the upstream datasets could
 be removed eventually.
 
-Desired datasets
-* EIA-860 which has plant- and unit-level technology, location and various
-  characteristics.
-* Monthly production by plant (EIA-923)
-    - Export historical hydro output for as many years as practical
-    - Average monthly output of wind and solar could be useful for 
-      reality checks, but isn't top priority
-* Monthly fuel inputs by plant (EIA-923)
-* Estimated average heat rates based on monthly production & fuel inputs
-    - Export to database
+Code for data scraping and processing is ment to be clean, so that updating the catalogue as new data is released each year is easy. The code tries to be clean and generally useful, so recruiting outside collaborators to help maintain it is possible.
+
+Desired datasets:
+* Plant- and unit-level characteristics (EIA-860)
+  - Technology, location, capacity, and other key characteristics
+  - Minimum level of aggregation. This outputs are not ment to be used for unit
+    commitment modeling
+* Monthly net electricity production and capacity factor (EIA-923)
+  - Hydro plants: Historical output for as many years as practical
+  - Wind and solar plants: Historical output could be useful for reality
+    checks, but isn't top priority
+* Monthly heat rate, net electricity production, fuel consumption and capacity
+  factor (EIA-923)
+  - Thermal plants: Historical output for as many years as practical
 * Average capital costs of recently installed generators: these will provide a
   reality check for our cost projections, and can be the left-most datapoint
   in our graphs of cost projections.
     https://www.eia.gov/electricity/generatorcosts/
-* O&M costs 2005-2015: http://www.eia.gov/electricity/annual/html/epa_08_04.html
-  New construction cost & performance characteristics assumptions, including
+* O&M costs 2005-2015:
+  http://www.eia.gov/electricity/annual/html/epa_08_04.html
+* New construction cost & performance characteristics assumptions, including
   regional capital cost differences:
     http://www.eia.gov/outlooks/aeo/assumptions/pdf/table_8.2.pdf
 
 
-Summarize select data and export to text files
-- Filter out plants that were planned but are now cancelled
-- Initially summarize by plant, generator type and vintage
-- Eventually aggregate all similar generator within a load zone 
-  (could be outside the scope of this script)
+Select data is summarized and exported to tab separated files:
+  - Unit-level data for each generation project is aggregated by plant,
+    technology, energy source, and vintage. In addition, gas and steam turbines
+    belonging to combined cycle plants get aggregated together.
+  - Units' minimum stable generation level, time from cold shutdown to full
+    load, geographical coordinates, and other specific features are only
+    extracted for the most recent year.
+  - Only proposed plants that have initiated construction or at least have
+    their regulatory approvement pending are be considered.
+  - Further aggregation may be achieved for unit data by modifying the
+    aggregation lists, though it could be better to upload data with the
+    current aggregation level and perform further operations directly in the DB
 
-Perform quality control on the data, probably with Jupyter notebooks:
-- Flag outliers for manual review
-- Check that aggregation method is covering all relevant plants and not
-  getting thrown off by edge cases of plants that include coal steam turbines,
-  gas combined cycle, and gas single cycle units.
-- Assess methods of estimating heat rates and comparing to previously estimated
-  rates. If we can't do well on edge cases of plants with diverse units, then
-  extrapolate to those plants based on similar generation technologies and 
-  vintages.
-- etc
-
-Write clean code for scraping and data processing so updating the catalogue
-for next year's data is easy. If the code is clean and generally useful, we
-may be able to recruit outside collaborators to help maintain it. Don't make
-this code excessively specialized to Switch if it doesn't need to be.
-
-Push the cleaned and validated data into postgresql
-
-Assign plants to load zones in postgresql
-
-Aggregate similar plants within each load zone in postgresql to reduce the
-dataset size for the model. We aren't worried about discrete unit commitment 
-for this study at this time.
+Quality control:
+  - Mismatches between the plants present in the EIA-860 and EIA-923 forms are
+    registered in csv files, and a summary of the incomplete information is
+    printed to the console
+  - Historical hydro capacity factors and heat rates are printed alongside
+    other relevant data, so QA/QC can be done by visual inspection as well
+  - To Do: Flag outliers for manual review
+  - To Do: Maybe use Jupyter Notebooks for manual filtering
 
 RESOURCES
 

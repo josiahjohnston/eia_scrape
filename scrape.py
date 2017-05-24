@@ -20,7 +20,13 @@ Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
 Write a report with assumptions taken and observations noticed during the writing
 of these scripts and data analysis.
+Move region filtering code to separate script.
 
+To Do in separate scripts:
+Push the cleaned and validated data into postgresql.
+Assign plants to load zones in postgresql.
+Aggregate similar plants within each load zone in postgresql to reduce the
+dataset size for the model.
 
 """
 
