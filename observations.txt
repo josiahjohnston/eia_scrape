@@ -1,0 +1,47 @@
+From the EIA-923 instructions:
+
+Net Generation: is the gross generation minus
+the electric energy consumed at the generating station for pumps, fans, and
+auxiliary equipment. If the monthly station service load exceeded the monthly
+gross electrical generation, report negative electrical net generation with a
+minus sign.
+
+For the year 2015:
+
+############
+# Heat Rates
+
+When filtering for plants with capacity factor <= -0.05, only 6 plants remain
+(55 months total with negative heat rates).
+- 2 are ST that belong to industrial production facilities, so negative net
+generation is not unexpected
+- 3 are IC engines that have negative values for only some months. They may be
+part of industrial production facilities, but the names are obscure
+- 1 is a ST belonging to a cogen facility, which may have required additional
+electricity those few months to meet its heat demand
+
+When all negative heat rates are accounted for, there are 2074 months (~300
+plants).
+- Most of the records are very low negative capacity factor values (way
+smaller than -1%). Those months are of really low net electricity generation.
+Prime movers are varied.
+- Only 125 records consider negative net generation greater than -1000 MWh
+(operating aprox at 1-2 MW of consumption per hour)
+- Only 1 cogen plant presents noticeable negative heat rates.
+
+Cogen plants have mostly reasonable (even low) heat rates. A significant
+portion have high heat rates (15-20 MMBTU/MWh), but these are consistent with
+months of high capacity factors (they must indeed be inefficient).
+
+############
+# Hydro cf
+
+There are 202 records in which capacity factors (and net generation) were
+negative for standard turbines (NOT pumped storage).
+- 24 plants have negative records for more than 1 month
+- Only 15 records (2 plants) are negative values greater than -1%
+- Extreme cases: The Tule River plant accounts for the most extreme negative
+values (between -2 and -5%), but some quick online research yielded photos
+with the canals completely dry in 2015 due to the drought, so it is a
+resonable value. The Big Creek plants are a similar case. Both are also
+100-year old plants.
