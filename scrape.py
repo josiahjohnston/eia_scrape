@@ -338,7 +338,8 @@ def parse_eia923_data(directory):
         hydro_generation[['Year','Plant Code','Plant Name','Prime Mover']],
         hydro_generation.filter(regex=r'(?i)netgen')
         ], axis=1)
-    hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
+    hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code',
+        'Prime Mover', 'Nameplate Capacity (MW)', 'County', 'State']],
         on=['Plant Code','Prime Mover'], suffixes=('',''))
     for month in range(1,13):
         hydro_outputs.rename(
@@ -357,7 +358,10 @@ def parse_eia923_data(directory):
             'Year',
             'Plant Code',
             'Plant Name',
-            'Prime Mover'
+            'Prime Mover',
+            'Nameplate Capacity (MW)',
+            'State',
+            'County'
         ]
     hydro_outputs_narrow = pd.DataFrame(columns=['Month'])
     for month in range(1,13):
@@ -372,8 +376,8 @@ def parse_eia923_data(directory):
 
     # Get friendlier output
     hydro_outputs_narrow = hydro_outputs_narrow[['Month', 'Year',
-            'Plant Code', 'Plant Name', 'Prime Mover', 'Capacity Factor',
-            'Net Electricity Generation (MWh)']]
+            'Plant Code', 'Plant Name', 'State','County','Prime Mover',
+            'Nameplate Capacity (MW)', 'Capacity Factor', 'Net Electricity Generation (MWh)']]
     hydro_outputs_narrow = hydro_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
@@ -392,8 +396,8 @@ def parse_eia923_data(directory):
             fuel_based_generation.filter(regex=r'(?i)netgen')
         ], axis=1)
     heat_rate_outputs=pd.merge(heat_rate_outputs,
-        fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
-        on=['Plant Code','Prime Mover'], suffixes=('',''))
+        fuel_based_gen_projects[['Plant Code','Prime Mover','State', 'County',
+        'Nameplate Capacity (MW)']], on=['Plant Code','Prime Mover'], suffixes=('',''))
 
     # Aggregate consumption/generation of/by different types of coal in a same plant
     if AGGREGATE_COAL:
@@ -404,16 +408,15 @@ def parse_eia923_data(directory):
             ['Plant Code','Prime Mover','Energy Source'])
         heat_rate_outputs = gb.agg(
             {col:('max' if col in ['Plant Code','Plant Name','Prime Mover',
-                                    'Energy Source','Year']
+                                    'Energy Source','Year','State','County']
                 else sum) for col in heat_rate_outputs_columns}).reset_index(drop=True)
         heat_rate_outputs = heat_rate_outputs[heat_rate_outputs_columns]
         print "Aggregated coal power plant consumption."
 
     # Get total fuel consumption per plant and prime mover
     total_fuel_consumption = pd.concat([
-            fuel_based_generation[
-                ['Plant Code','Prime Mover']],
-                fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu')
+            fuel_based_generation[['Plant Code','Prime Mover']],
+            fuel_based_generation.filter(regex=r'(?i)elec[_\s]mmbtu')
             ], axis=1)
     total_fuel_consumption.rename(columns={
         total_fuel_consumption.columns[1+m]:'Fraction of Total Fuel Consumption Month {}'.format(m)
@@ -453,6 +456,13 @@ def parse_eia923_data(directory):
     append_historic_output_to_csv('historic_heat_rates_WIDE.tab', heat_rate_outputs)
     print "Saved heat rate data in wide format for {}.".format(year)
 
+    # Save in separate file plants that present multiple fuels
+    multi_fuel_heat_rate_outputs = heat_rate_outputs[((heat_rate_outputs>=0.05) &
+        (heat_rate_outputs<=0.95)).filter(regex=r'Fraction').any(axis=1)]
+    append_historic_output_to_csv('multi_fuel_heat_rates.tab', multi_fuel_heat_rate_outputs)
+    print ("{} records show use of multiple fuels (more than 5% of the secondary fuel). "
+            "Saved rows to multi_fuel_heat_rates.tab".format(len(multi_fuel_heat_rate_outputs)))
+
     ###############
     # NARROW format
     index_columns = [
@@ -460,7 +470,10 @@ def parse_eia923_data(directory):
             'Plant Code',
             'Plant Name',
             'Prime Mover',
-            'Energy Source'
+            'Energy Source',
+            'Nameplate Capacity (MW)',
+            'State',
+            'County'
         ]
     heat_rate_outputs_narrow = pd.DataFrame(columns=['Month'])
     for month in range(1,13):
@@ -482,9 +495,9 @@ def parse_eia923_data(directory):
 
     # Get friendlier output
     heat_rate_outputs_narrow = heat_rate_outputs_narrow[['Month', 'Year',
-            'Plant Code', 'Plant Name', 'Prime Mover', 'Energy Source',
-            'Heat Rate', 'Capacity Factor', 'Fraction of Total Fuel Consumption',
-            'Net Electricity Generation (MWh)']]
+            'Plant Code', 'Plant Name', 'State', 'County', 'Prime Mover',
+            'Energy Source', 'Nameplate Capacity (MW)', 'Heat Rate', 'Capacity Factor',
+            'Fraction of Total Fuel Consumption', 'Net Electricity Generation (MWh)']]
     heat_rate_outputs_narrow = heat_rate_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
