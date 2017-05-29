@@ -38,11 +38,13 @@ from calendar import monthrange
 from utils import download_file, download_metadata_fields, unzip
 
 unzip_directory = 'downloads'
-other_data_directory = 'other_dat'
+pickle_directory = 'pickle_data'
+other_data_directory = 'other_data'
 outputs_directory = 'processed_data'
 download_log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
 CLEAR_PRIOR_OUTPUTS = True
+REWRITE_PICKLES = False
 start_year, end_year = 2015,2015
 fuel_prime_movers = ['ST','GT','IC','CA','CT','CS','CC']
 region_states = ['WA','OR','CA','AZ','NV','NM','UT','ID','MT','WY','CO','TX']
@@ -97,7 +99,7 @@ def uniformize_names(df):
 
 
 def main():
-    for directory in (unzip_directory, other_data_directory, outputs_directory):
+    for directory in (unzip_directory, other_data_directory, outputs_directory, pickle_directory):
         if not os.path.exists(directory):
             os.makedirs(directory)
 
@@ -178,17 +180,29 @@ def parse_eia923_data(directory):
     year = int(directory[-4:])
     print "============================="
     print "Processing data for year {}.".format(year)
-    # Name of the relevant spreadsheet is not consistent throughout years
-    # Read largest file in the directory instead of looking by name
-    largest_file = max([os.path.join(directory, f)
-        for f in os.listdir(directory)], key=os.path.getsize)
-    # Different number of blank rows depending on year
-    if year >= 2011:
-        rows_to_skip = 5
+    
+    # First, try saving data as pickle if it hasn't been done before
+    # Reading pickle files is orders of magnitude faster than reading Excel
+    # files directly. This saves tons of time when re-running the script.
+    pickle_path = os.path.join(pickle_directory,'eia923_{}.pickle'.format(year))
+    if not os.path.exists(pickle_path) or REWRITE_PICKLES:
+        print "Pickle file has to be written for this EIA923 form. Creating..."
+        # Name of the relevant spreadsheet is not consistent throughout years
+        # Read largest file in the directory instead of looking by name
+        largest_file = max([os.path.join(directory, f)
+            for f in os.listdir(directory)], key=os.path.getsize)
+        # Different number of blank rows depending on year
+        if year >= 2011:
+            rows_to_skip = 5
+        else:
+            rows_to_skip = 7
+        generation = uniformize_names(pd.read_excel(largest_file,
+            sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
+        generation.to_pickle(pickle_path)
     else:
-        rows_to_skip = 7
-    generation = uniformize_names(pd.read_excel(largest_file,
-        sheetname='Page 1 Generation and Fuel Data', skiprows=rows_to_skip))
+        print "Pickle file exists for this EIA923. Reading..."
+        generation = pd.read_pickle(pickle_path)
+    
     generation.loc[:,'Year'] = year
     # Get column order for easier month matching later on
     column_order = list(generation.columns)
@@ -467,42 +481,64 @@ def parse_eia860_data(directory):
     print "============================="
     print "Processing data for year {}.".format(year)
 
-    # Different number of blank rows depending on year
-    if year <= 2010:
-        rows_to_skip = 0
+    # First, try saving data as pickle if it hasn't been done before
+    # Reading pickle files is orders of magnitude faster than reading Excel
+    # files directly. This saves tons of time when re-running the script.
+    pickle_path_plants = os.path.join(pickle_directory,'eia860_{}_plants.pickle'.format(year))
+    pickle_path_existing_generators = os.path.join(pickle_directory,'eia860_{}_existing.pickle'.format(year))
+    pickle_path_proposed_generators = os.path.join(pickle_directory,'eia860_{}_proposed.pickle'.format(year))
+    
+    if not os.path.exists(pickle_path_plants) \
+        or not os.path.exists(pickle_path_existing_generators) \
+            or not os.path.exists(pickle_path_proposed_generators) \
+                or REWRITE_PICKLES:
+        print "Pickle files have to be written for this EIA860 form. Creating..."
+        # Different number of blank rows depending on year
+        if year <= 2010:
+            rows_to_skip = 0
+        else:
+            rows_to_skip = 1
+
+        for f in os.listdir(directory):
+            path = os.path.join(directory, f)
+            # Use a simple for loop, since for years previous to 2008, there are
+            # multiple ocurrences of "GenY" in files. Haven't found a clever way
+            # to do a pattern search with Glob that excludes unwanted files.
+            # In any case, all files have to be read differently, so I'm not
+            # sure that the code would become any cleaner by using Glob.
+
+            # From 2009 onwards, look for files with "Plant" and "Generator"
+            # in their name.
+            # Avoid trying to read a temporal file if any Excel workbook is open
+            if 'Plant' in f and '~' not in f:
+                plants = uniformize_names(
+                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+            if 'Generator' in f and '~' not in f:
+                existing_generators = uniformize_names(
+                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+                existing_generators['Operational Status'] = 'Operable'
+                proposed_generators = uniformize_names(
+                    pd.read_excel(path, sheetname=1, skiprows=rows_to_skip))
+                proposed_generators['Operational Status'] = 'Proposed'
+            # Different names from 2008 backwards
+            if f.startswith('PRGenY'):
+                proposed_generators = uniformize_names(
+                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+                proposed_generators['Operational Status'] = 'Proposed'
+            if f.startswith('GenY'):
+                existing_generators = uniformize_names(
+                    pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
+                existing_generators['Operational Status'] = 'Operable'
+        
+        plants.to_pickle(pickle_path_plants)
+        existing_generators.to_pickle(pickle_path_existing_generators)
+        proposed_generators.to_pickle(pickle_path_proposed_generators)
     else:
-        rows_to_skip = 1
+        print "Pickle files exist for this EIA860. Reading..."
+        plants = pd.read_pickle(pickle_path_plants)
+        existing_generators = pd.read_pickle(pickle_path_existing_generators)
+        proposed_generators = pd.read_pickle(pickle_path_proposed_generators)
 
-    for f in os.listdir(directory):
-        path = os.path.join(directory, f)
-        # Use a simple for loop, since for years previous to 2008, there are
-        # multiple ocurrences of "GenY" in files. Haven't found a clever way
-        # to do a pattern search with Glob that excludes unwanted files.
-        # In any case, all files are read differently with Pandas, so I'm not
-        # sure that the code would become any cleaner by using Glob.
-
-        # From 2009 onwards, look for files with "Plant" and "Generator" in its
-        # name.
-        # Avoid trying to read a temporal file if any Excel workbook is open
-        if 'Plant' in f and '~' not in f:
-            plants = uniformize_names(
-                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-        if 'Generator' in f and '~' not in f:
-            existing_generators = uniformize_names(
-                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-            existing_generators['Operational Status'] = 'Operable'
-            proposed_generators = uniformize_names(
-                pd.read_excel(path, sheetname=1, skiprows=rows_to_skip))
-            proposed_generators['Operational Status'] = 'Proposed'
-        # Different names from 2008 backwards
-        if f.startswith('PRGenY'):
-            proposed_generators = uniformize_names(
-                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-            proposed_generators['Operational Status'] = 'Proposed'
-        if f.startswith('GenY'):
-            existing_generators = uniformize_names(
-                pd.read_excel(path, sheetname=0, skiprows=rows_to_skip))
-            existing_generators['Operational Status'] = 'Operable'
     generators = pd.merge(existing_generators, plants,
         on=['Utility Id','Plant Code', 'Plant Name','State'],
         suffixes=('_units', ''))
