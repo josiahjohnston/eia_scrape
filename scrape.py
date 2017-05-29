@@ -45,10 +45,12 @@ download_log_path = os.path.join(unzip_directory, 'download_log.csv')
 REUSE_PRIOR_DOWNLOADS = True
 CLEAR_PRIOR_OUTPUTS = True
 REWRITE_PICKLES = False
+AGGREGATE_COAL = True
 start_year, end_year = 2015,2015
 fuel_prime_movers = ['ST','GT','IC','CA','CT','CS','CC']
 region_states = ['WA','OR','CA','AZ','NV','NM','UT','ID','MT','WY','CO','TX']
 accepted_status_codes = ['OP','SB','CO','SC','OA','OZ','TS','L','T','U','V']
+coal_codes = ['ANT','BIT','LIG','SGC','SUB','WC','RC']
 gen_relevant_data = ['Plant Code', 'Plant Name', 'Status', 'Nameplate Capacity (MW)',
                     'Prime Mover', 'Energy Source', 'County', 'State', 'Nerc Region',
                     'Operating Year', 'Planned Retirement Year',
@@ -180,7 +182,7 @@ def parse_eia923_data(directory):
     year = int(directory[-4:])
     print "============================="
     print "Processing data for year {}.".format(year)
-    
+
     # First, try saving data as pickle if it hasn't been done before
     # Reading pickle files is orders of magnitude faster than reading Excel
     # files directly. This saves tons of time when re-running the script.
@@ -202,7 +204,7 @@ def parse_eia923_data(directory):
     else:
         print "Pickle file exists for this EIA923. Reading..."
         generation = pd.read_pickle(pickle_path)
-    
+
     generation.loc[:,'Year'] = year
     # Get column order for easier month matching later on
     column_order = list(generation.columns)
@@ -392,6 +394,20 @@ def parse_eia923_data(directory):
     heat_rate_outputs=pd.merge(heat_rate_outputs,
         fuel_based_gen_projects[['Plant Code','Prime Mover','Nameplate Capacity (MW)']],
         on=['Plant Code','Prime Mover'], suffixes=('',''))
+
+    # Aggregate consumption/generation of/by different types of coal in a same plant
+    if AGGREGATE_COAL:
+        heat_rate_outputs_columns = list(heat_rate_outputs.columns)
+        heat_rate_outputs.loc[:,'Energy Source'].replace(
+            to_replace=coal_codes, value='COAL', inplace=True)
+        gb = heat_rate_outputs.groupby(
+            ['Plant Code','Prime Mover','Energy Source'])
+        heat_rate_outputs = gb.agg(
+            {col:('max' if col in ['Plant Code','Plant Name','Prime Mover',
+                                    'Energy Source','Year']
+                else sum) for col in heat_rate_outputs_columns}).reset_index(drop=True)
+        heat_rate_outputs = heat_rate_outputs[heat_rate_outputs_columns]
+        print "Aggregated coal power plant consumption."
 
     # Get total fuel consumption per plant and prime mover
     total_fuel_consumption = pd.concat([
