@@ -17,9 +17,6 @@ To Do:
 Better error checks.
 Calculate hydro outputs previous to 2004 with nameplate capacities of that year,
 but first check that uprating is not significant for hydro plants.
-Write a report with assumptions taken and observations noticed during the writing
-of these scripts and data analysis.
-Move region filtering code to separate script.
 
 To Do in separate scripts:
 Push the cleaned and validated data into postgresql.
@@ -65,9 +62,6 @@ gen_relevant_data_for_last_year = ['Time From Cold Shutdown To Full Load',
                         'Latitude','Longitude','Balancing Authority Name',
                         'Grid Voltage (kV)', 'Carbon Capture Technology']
 gen_data_to_be_summed_for_last_year = ['Minimum Load (MW)']
-misspelled_counties = [
-    'Claveras'
-    ]
 
 
 def uniformize_names(df):
@@ -242,7 +236,7 @@ def parse_eia923_data(directory):
            "the US").format(len(generation_projects))
     print ("---\nGeneration project data processed from the EIA860 form will be "
         "aggregated by Plant and Prime Mover for consistency with EIA923 data.\n---")
-    gb = generation_projects.groupby(['EIA Plant Code','Prime Mover','Operational Status'])
+    gb = generation_projects.groupby(['EIA Plant Code','Prime Mover','Energy Source','Operational Status'])
     generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                     for datum in generation_projects.columns})
     hydro_gen_projects = generation_projects[
@@ -400,8 +394,9 @@ def parse_eia923_data(directory):
             fuel_based_generation.filter(regex=r'(?i)netgen')
         ], axis=1)
     heat_rate_outputs=pd.merge(heat_rate_outputs,
-        fuel_based_gen_projects[['Plant Code','Prime Mover','State', 'County',
-        'Nameplate Capacity (MW)']], on=['Plant Code','Prime Mover'], suffixes=('',''))
+        fuel_based_gen_projects[['Plant Code','Prime Mover','Energy Source',
+        'State','County','Nameplate Capacity (MW)']],
+        on=['Plant Code','Prime Mover','Energy Source'], suffixes=('',''))
 
     # Aggregate consumption/generation of/by different types of coal in a same plant
     if AGGREGATE_COAL:
@@ -412,7 +407,8 @@ def parse_eia923_data(directory):
             ['Plant Code','Prime Mover','Energy Source'])
         heat_rate_outputs = gb.agg(
             {col:('max' if col in ['Plant Code','Plant Name','Prime Mover',
-                                    'Energy Source','Year','State','County']
+                                    'Energy Source','Year','State','County',
+                                    'Nameplate Capacity (MW)']
                 else sum) for col in heat_rate_outputs_columns}).reset_index(drop=True)
         heat_rate_outputs = heat_rate_outputs[heat_rate_outputs_columns]
         print "Aggregated coal power plant consumption."
@@ -460,18 +456,22 @@ def parse_eia923_data(directory):
     heat_rate_outputs = heat_rate_outputs[~negative_filter]
     print "Removed {} records of consistently negative heat rates.".format(
         len(negative_heat_rate_outputs))
+    
+    ################
+    # Ignore this snippet until we figure out the definite aggregation procedure
+    ################
     # Rewrite generation project data, removing plants with negative heat rate
-    fname = 'generation_projects_{}.tab'.format(year)
-    generation_projects = generation_projects[generation_projects_columns]
-    generation_projects = generation_projects[~(
-        generation_projects['EIA Plant Code'].isin(negative_heat_rate_outputs['Plant Code']) &
-        generation_projects['Prime Mover'].isin(negative_heat_rate_outputs['Prime Mover']))]
-    with open(os.path.join(outputs_directory, fname),'w') as f:
-        generation_projects.to_csv(f, sep='\t', encoding='utf-8', index=False)
-    print "Rewrote data of {} projects to {} file.".format(
-        len(generation_projects), fname)
-    print "\t-Aggregated by Plant Code and Prime Mover"
-    print "\t-Filtered plants with consistently negative generation"
+    # fname = 'generation_projects_{}.tab'.format(year)
+    # generation_projects = generation_projects[generation_projects_columns]
+    # generation_projects = generation_projects[~(
+    #     generation_projects['EIA Plant Code'].isin(negative_heat_rate_outputs['Plant Code']) &
+    #     generation_projects['Prime Mover'].isin(negative_heat_rate_outputs['Prime Mover']))]
+    # with open(os.path.join(outputs_directory, fname),'w') as f:
+    #     generation_projects.to_csv(f, sep='\t', encoding='utf-8', index=False)
+    # print "Rewrote data of {} projects to {} file.".format(
+    #     len(generation_projects), fname)
+    # print "\t-Aggregated by Plant Code and Prime Mover"
+    # print "\t-Filtered plants with consistently negative generation"
 
     # Get the best heat rate in a separate column
     heat_rate_outputs.loc[:,'Minimum Heat Rate'] = heat_rate_outputs[
@@ -653,69 +653,6 @@ def parse_eia860_data(directory):
     with open(os.path.join(outputs_directory, fname),'w') as f:
         generators.to_csv(f, sep='\t', encoding='utf-8', index=False)
     print "Saved data to {} file.\n".format(fname)
-
-
-def assign_counties_to_region(region_id, area=0.5):
-    """
-    Reads geographic data for US counties and assigns them to a NERC Region,
-    producing a simple text file with the list of counties which have more than
-    a certain % of area intersection with the specified Region.
-
-    """
-
-    query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(region_id)
-    region_name = connect_to_db_and_run_query(query=query, database='switch_gis')[0][0]
-    # assign county if (area)% or more of its area falls in the region
-    query = "SELECT name\
-             FROM ventyx_nerc_reg_region regions CROSS JOIN us_counties counties\
-             WHERE regions.gid={} AND\
-             ST_Area(ST_Intersection(counties.the_geom, regions.the_geom))/\
-             ST_Area(counties.the_geom)>={}".format(region_id, area)
-    wecc_counties = pd.DataFrame(connect_to_db_and_run_query(query=query,
-        database='switch_gis'))
-    file_path = os.path.join(other_data_directory, '{}_counties.txt'.format(
-        region_name))
-    with open(file_path, 'w') as f:
-        wecc_counties.to_csv(f, header=False, index=False)
-    print "Saved list of counties assigned to the {} Region in {}".format(
-        region_name, file_path)
-
-
-def filter_dataframe_by_region_id(df, region_id):
-    """
-    Filters a dataframe by NERC Region and assigns Regions to rows that
-    do not have one, according to County and State.
-
-    Should be migrated to a separate file to work directly with the DB.
-
-    """
-
-    # WECC region id: 13
-    query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(region_id)
-    region_name = connect_to_db_and_run_query(query=query, database='switch_gis')[0][0]
-    
-    # Assign projects to region according to county if no NERC Region is defined.
-    county_list_path = os.path.join(other_data_directory, '{}_counties.txt'.format(region_name))
-    if not os.path.exists(county_list_path):
-        print "Database will be queried to obtain the list of counties that belong to the {} region.".format(region_name)
-        assign_counties_to_region(region_id, 0.5)
-    county_list = list(pd.read_csv(county_list_path, header=None)[0].map(lambda c: str(c).title()))
-    
-    # If region is not defined, use County and State to filter
-    # WARNING: This filter is not perfect
-    generators.loc[generators['Nerc Region'].isnull()]
-
-    df = df.loc[(df['Nerc Region'] == region_name) |
-        ((df['County'].map(lambda c: str(c).title()).isin(
-            county_list+misspelled_counties)) & 
-        (df['State'].isin(region_states)))] 
-    
-    df.reset_index(drop=True, inplace=True)
-    print "Filtered to {} existing and {} proposed generation units in the {} "\
-        "region.".format(region_name,
-            len(df[df['Operational Status']=='Operable']),
-            len(df[df['Operational Status']=='Proposed']))
-    return df
 
 
 # Generator costs from schedule 5 are hidden for individual generators,
