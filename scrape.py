@@ -235,22 +235,25 @@ def parse_eia923_data(directory):
         len(generation) - len(fuel_based_generation) - len(hydro_generation))
 
     # Reload a summary of generation projects for nameplate capacity.
-    generation_projects = uniformize_names(pd.read_csv(
-        os.path.join(outputs_directory,'generation_projects_{}.tab').format(year),
-        sep='\t'))
+    generation_projects = pd.read_csv(os.path.join(outputs_directory,
+        'generation_projects_{}.tab').format(year), sep='\t')
+    generation_projects_columns = generation_projects.columns
     print ("Read in processed EIA860 plant data for {} generation units in "
            "the US").format(len(generation_projects))
-    gb = generation_projects.groupby(['Plant Code','Prime Mover','Operational Status'])
+    print ("---\nGeneration project data processed from the EIA860 form will be "
+        "aggregated by Plant and Prime Mover for consistency with EIA923 data.\n---")
+    gb = generation_projects.groupby(['EIA Plant Code','Prime Mover','Operational Status'])
     generation_projects = gb.agg({datum:('max' if datum not in gen_data_to_be_summed else sum)
                                     for datum in generation_projects.columns})
     hydro_gen_projects = generation_projects[
         (generation_projects['Operational Status']=='Operable') &
-        (generation_projects['Energy Source']=='WAT')]
+        (generation_projects['Energy Source']=='WAT')].rename(
+            columns={'EIA Plant Code':'Plant Code'})
     fuel_based_gen_projects = generation_projects[
         (generation_projects['Operational Status']=='Operable') &
-        (generation_projects['Prime Mover'].isin(fuel_prime_movers))]
-    print ("Aggregated plant data into {} generation plants through Plant Code "
-           "and Prime Mover.").format(len(generation_projects))
+        (generation_projects['Prime Mover'].isin(fuel_prime_movers))].rename(
+            columns={'EIA Plant Code':'Plant Code'})
+    print "Aggregated plant data into {} records".format(len(generation_projects))
     print "\tHydro projects:{}".format(len(hydro_gen_projects))
     print "\tFuel based projects:{}".format(len(fuel_based_gen_projects))
     print "\tOther projects:{}".format(
@@ -382,7 +385,8 @@ def parse_eia923_data(directory):
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
     append_historic_output_to_csv('historic_hydro_capacity_factors_NARROW.tab', hydro_outputs_narrow)
-    print "Saved hydro capacity factor data in narrow format for {}.".format(year)
+    print "Saved {} hydro capacity factor records in narrow format for {}.".format(
+        len(hydro_outputs_narrow), year)
 
     #############################
     # Save heat rate profiles
@@ -450,18 +454,31 @@ def parse_eia923_data(directory):
             heat_rate_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)].div(
                 monthrange(int(year),month)[1]*24*heat_rate_outputs['Nameplate Capacity (MW)'])
 
+    # Filter records of consistently negative heat rates throughout the year
+    negative_filter = (heat_rate_outputs <= 0).filter(regex=r'Heat Rate').all(axis=1)
+    negative_heat_rate_outputs = heat_rate_outputs[negative_filter]
+    heat_rate_outputs = heat_rate_outputs[~negative_filter]
+    print "Removed {} records of consistently negative heat rates.".format(
+        len(negative_heat_rate_outputs))
+    # Rewrite generation project data, removing plants with negative heat rate
+    fname = 'generation_projects_{}.tab'.format(year)
+    generation_projects = generation_projects[generation_projects_columns]
+    generation_projects = generation_projects[~(
+        generation_projects['EIA Plant Code'].isin(negative_heat_rate_outputs['Plant Code']) &
+        generation_projects['Prime Mover'].isin(negative_heat_rate_outputs['Prime Mover']))]
+    with open(os.path.join(outputs_directory, fname),'w') as f:
+        generation_projects.to_csv(f, sep='\t', encoding='utf-8', index=False)
+    print "Rewrote data of {} projects to {} file.".format(
+        len(generation_projects), fname)
+    print "\t-Aggregated by Plant Code and Prime Mover"
+    print "\t-Filtered plants with consistently negative generation"
+
     # Get the best heat rate in a separate column
-    heat_rate_outputs['Minimum Heat Rate'] = heat_rate_outputs[heat_rate_outputs>0].iloc[:,5:17].min(axis=1)
+    heat_rate_outputs.loc[:,'Minimum Heat Rate'] = heat_rate_outputs[
+        heat_rate_outputs>0].iloc[:,5:17].min(axis=1)
 
     append_historic_output_to_csv('historic_heat_rates_WIDE.tab', heat_rate_outputs)
     print "Saved heat rate data in wide format for {}.".format(year)
-
-    # Save in separate file plants that present multiple fuels
-    multi_fuel_heat_rate_outputs = heat_rate_outputs[((heat_rate_outputs>=0.05) &
-        (heat_rate_outputs<=0.95)).filter(regex=r'Fraction').any(axis=1)]
-    append_historic_output_to_csv('multi_fuel_heat_rates.tab', multi_fuel_heat_rate_outputs)
-    print ("{} records show use of multiple fuels (more than 5% of the secondary fuel). "
-            "Saved rows to multi_fuel_heat_rates.tab".format(len(multi_fuel_heat_rate_outputs)))
 
     ###############
     # NARROW format
@@ -502,7 +519,15 @@ def parse_eia923_data(directory):
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
     append_historic_output_to_csv('historic_heat_rates_NARROW.tab', heat_rate_outputs_narrow)
-    print "Saved heat rate data in narrow format for {}.".format(year)
+    print "Saved {} heat rate records in narrow format for {}.".format(
+        len(heat_rate_outputs_narrow), year)
+
+    # Save plants that present multiple fuels in separate file
+    multi_fuel_heat_rate_outputs = heat_rate_outputs[((heat_rate_outputs>=0.05) &
+        (heat_rate_outputs<=0.95)).filter(regex=r'Fraction').any(axis=1)]
+    append_historic_output_to_csv('multi_fuel_heat_rates.tab', multi_fuel_heat_rate_outputs)
+    print ("{} records show use of multiple fuels (more than 5% of the secondary fuel). "
+            "Saved to multi_fuel_heat_rates.tab".format(len(multi_fuel_heat_rate_outputs)))
 
 
 def parse_eia860_data(directory):
@@ -624,8 +649,6 @@ def parse_eia860_data(directory):
     # Add EIA prefix to be explicit about code origin
     generators = generators.rename(columns={'Plant Code':'EIA Plant Code'})
 
-    if not os.path.exists(outputs_directory):
-        os.makedirs(outputs_directory)
     fname = 'generation_projects_{}.tab'.format(year)
     with open(os.path.join(outputs_directory, fname),'w') as f:
         generators.to_csv(f, sep='\t', encoding='utf-8', index=False)
