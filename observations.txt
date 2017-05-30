@@ -6,7 +6,7 @@ auxiliary equipment. If the monthly station service load exceeded the monthly
 gross electrical generation, report negative electrical net generation with a
 minus sign.
 
-For the year 2015:
+The following comments regard data for 2015:
 
 ############
 # Heat Rates
@@ -20,8 +20,7 @@ part of industrial production facilities, but the names are obscure
 - 1 is a ST belonging to a cogen facility, which may have required additional
 electricity those few months to meet its heat demand
 
-When all negative heat rates are accounted for, there are 2074 months (~300
-plants).
+There are 2074 months (~300 plants) of negative heat rate records.
 - Most of the records are very low negative capacity factor values (way
 smaller than -1%). Those months are of really low net electricity generation.
 Prime movers are varied.

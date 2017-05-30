@@ -13,14 +13,18 @@ FILE LAYOUT
 pip_requirements.txt is a working list of requirements. It needs to get moved
 to a setup.py file.
 
-Most of the code is currently in scrape.py which may later get re-organized as a package. Functions for downloading files in an
-archive-safe manner and unzipping files are in utils.py. These should get 
-migrated into a package that lives in a subdirectory.
+Most of the code is currently in scrape.py which may later get re-organized as
+a package. Functions for downloading files in an archive-safe manner and
+unzipping files are in utils.py. These should get migrated into a package that
+lives in a subdirectory.
 
 The codes located in other_dat/* were manually extracted from the latest
 "Layout" Excel workbook from the EIA860 form. Their extraction and save should
 get automated, and they should live in the directory with other auto-extracted
 files - either downloads or a new directory for intermediate outputs.
+
+The average heat rates located in other_dat/* were manually extracted from the
+EIA website.
 
 
 GOALS
@@ -38,8 +42,9 @@ Code for data scraping and processing is ment to be clean, so that updating the 
 Desired datasets:
 * Plant- and unit-level characteristics (EIA-860)
   - Technology, location, capacity, and other key characteristics
-  - Minimum level of aggregation. This outputs are not ment to be used for unit
-    commitment modeling
+  - Maximum level of plant aggregation. This outputs are not ment to be used
+  for unit commitment modeling, and consumption/generation data from the EIA923
+  form is specified per plant and prime mover, NOT per unit
 * Monthly net electricity production and capacity factor (EIA-923)
   - Hydro plants: Historical output for as many years as practical
   - Wind and solar plants: Historical output could be useful for reality
@@ -59,9 +64,10 @@ Desired datasets:
 
 
 Select data is summarized and exported to tab separated files:
-  - Unit-level data for each generation project is aggregated by plant,
-    technology, energy source, and vintage. In addition, gas and steam turbines
-    belonging to combined cycle plants get aggregated together.
+  - Plant-level data for each generation project is first aggregated by plant,
+    technology, energy source, and vintage. There are two other aggregations:
+    --By plant and technology; for consistency with consumption/generation data
+    --Gas and steam turbines belonging to combined cycle plants
   - Units' minimum stable generation level, time from cold shutdown to full
     load, geographical coordinates, and other specific features are only
     extracted for the most recent year.
@@ -118,3 +124,7 @@ https://www.eia.gov/electricity/data/browser/
 * Interactive graphical website for browsing their entire data portal.
 * Can potentially use to help construct API queries, but another one of their 
   tools may be more useful for that.
+
+EIA Average Tested Heat Rates by Prime Mover and Energy Source, 2007 - 2015
+https://www.eia.gov/electricity/annual/html/epa_08_02.html
+    average heat rates for benchmarking

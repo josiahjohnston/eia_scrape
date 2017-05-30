@@ -1,0 +1,5 @@
+Year    Technology    Coal    Petroleum   Natural Gas Nuclear
+2015    Steam Generator 10.059  10.197  10.372  10.458
+2015    Gas Turbine --  13.550  11.302  --
+2015    Internal Combustion --  10.379  9.322   --
+2015    Combined Cycle  --  9.676   7.655   --
