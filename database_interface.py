@@ -3,6 +3,12 @@
 """
 Provides several functions to work with the SWITCH database.
 
+To Do:
+Push the cleaned and validated data into postgresql.
+Assign plants to load zones in postgresql.
+Aggregate similar plants within each load zone in postgresql to reduce the
+dataset size for the model.
+
 """
 
 import pandas as pd

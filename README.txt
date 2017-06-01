@@ -65,9 +65,8 @@ Desired datasets:
 
 Select data is summarized and exported to tab separated files:
   - Plant-level data for each generation project is first aggregated by plant,
-    technology, energy source, and vintage. There are two other aggregations:
-    --By plant and technology; for consistency with consumption/generation data
-    --Gas and steam turbines belonging to combined cycle plants
+    technology, energy source, and vintage and then gas and steam turbines
+    belonging to combined cycle plants are lumped together
   - Units' minimum stable generation level, time from cold shutdown to full
     load, geographical coordinates, and other specific features are only
     extracted for the most recent year.

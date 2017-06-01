@@ -32,6 +32,22 @@ Cogen plants have mostly reasonable (even low) heat rates. A significant
 portion have high heat rates (15-20 MMBTU/MWh), but these are consistent with
 months of high capacity factors (they must indeed be inefficient).
 
+Plants with consistently negative heat rates in a year are removed from the
+heat rate output tables and the list is stored in a file for inspection.
+Careful: These plants are still listed in the generation projects output table.
+A list of plants that use multiple fuels is also stored in a separate file
+(though these records are not eliminated from the output table).
+
+To be noted: If a plant is listed in the EIA860 as using more than one fuel (as
+is the case with a lot of plants that have units that use different fuels
+each), then the generation/consumption data will be correctly computed. If, on
+the other hand, the plant is only listed as using one main fuel, then its
+generation/consumption data will only get calculated for that fuel. So, this
+plant will probably appear in the multi-fuel plant list with only one listed
+fuel. A similar thing happens if a plant uses two fuels, but has negative heat
+rates with one of them. These plants should be inspected manually to determine
+the course of action.
+
 ############
 # Hydro cf
 
