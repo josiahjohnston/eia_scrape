@@ -15,6 +15,7 @@ import os
 import psycopg2
 import requests
 import zipfile
+import pandas as pd
 
 download_metadata_fields = ('filename', 'url', 'download_timestamp_utc', 'sha1')
 # A standard size for chunking data for disk writes: 64kb = 2^16 = 65536
@@ -65,13 +66,14 @@ def connect_to_db_and_run_query(query, database='postgres', host='localhost', po
     try:
         cur.execute(query)
         # fetchall() returns a list of tuples with the rows resulting from the query
-        output = cur.fetchall()
+        # column names must be gotten from the cursor's description
+        df = pd.DataFrame(cur.fetchall(), columns=[col[0] for col in cur.description])
         print 'Successfully executed query: returning results.'
-        return output
+        return df
     except:
         print 'Query execution failed.'
         return None
     cur.close()
     con.close()
     print 'Database connection closed.'
-    
+        
