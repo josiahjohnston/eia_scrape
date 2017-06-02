@@ -23,6 +23,7 @@ misspelled_counties = [
     'Claveras'
     ]
 
+
 def pull_generation_projects_data():
     print "Reading in current generation projects data from database..."
     query = "SELECT * \
@@ -40,19 +41,51 @@ def pull_generation_projects_data():
     return db_gens
 
 def explore_heat_rates():
-    heat_rate_outputs = pd.read_csv(
-        os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t')
-    heat_rate_outputs = heat_rate_outputs[heat_rate_outputs['Year']==2015]
-    heat_rate_outputs.rename(columns={'Plant Name':'name'}, inplace=True)
-    db_gen_projects = pull_generation_projects_data()
-    name_intersection = heat_rate_outputs[heat_rate_outputs['name'].isin(
-        db_gen_projects['name'])]['name']
-    return pd.merge(
-        db_gen_projects[db_gen_projects['name'].isin(
-            name_intersection)][['name','gen_tech','energy_source','full_load_heat_rate']],
-        heat_rate_outputs[heat_rate_outputs['name'].isin(
-            name_intersection)][['name','Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2']],
-        how='right', on='name')
+    # heat_rate_outputs = pd.read_csv(
+    #     os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t')
+    # heat_rate_outputs = heat_rate_outputs[heat_rate_outputs['Year']==2015]
+    # heat_rate_outputs.rename(columns={'Plant Name':'name'}, inplace=True)
+    # db_gen_projects = pull_generation_projects_data()
+    # name_intersection = heat_rate_outputs[heat_rate_outputs['name'].isin(
+    #     db_gen_projects['name'])]['name']
+
+    # df = pd.merge(
+    #     db_gen_projects[db_gen_projects['name'].isin(
+    #         name_intersection)][['name','gen_tech','energy_source','full_load_heat_rate']],
+    #     heat_rate_outputs[heat_rate_outputs['name'].isin(
+    #         name_intersection)][['name','Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2']],
+    #     how='right', on='name')
+
+    db_gen_projects = pull_generation_projects_data().rename(columns={'name':'Plant Name', 'gen_tech':'Prime Mover'})
+    db_gen_projects.loc[:,'Prime Mover'].replace(
+        {
+        'Coal_Steam_Turbine':'ST',
+        'Gas_Steam_Turbine':'ST',
+        'Gas_Combustion_Turbine':'GT',
+        'Gas_Combustion_Turbine_Cogen':'GT',
+        'CCGT':'CC',
+        'DistillateFuelOil_Combustion_Turbine':'GT',
+        'DistillateFuelOil_Internal_Combustion_Engine':'IC',
+        'Geothermal':'ST',
+        'Gas_Internal_Combustion_Engine':'IC',
+        'Bio_Gas_Internal_Combustion_Engine':'IC',
+        'Bio_Gas_Steam_Turbine':'ST'
+        },
+        inplace=True)
+    eia_gen_projects = filter_projects_by_region_id(13)
+
+    df = pd.merge(db_gen_projects, eia_gen_projects, on=['Plant Name','Prime Mover'], how='inner').loc[:,[
+        'Plant Name','gen_tech','energy_source','full_load_heat_rate',
+        'Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2']]
+    df = df[df['full_load_heat_rate']>0]
+
+    print "\nPrinting intersection of DB and EIA generation projects that have a specified heat rate to heat_rate_comparison.tab"
+    
+    fpath = os.path.join('processed_data','heat_rate_comparison.tab')
+    with open(fpath, 'w') as outfile:
+        df.to_csv(outfile, sep='\t', header=True, index=False)
+
+    return df
 
 def filter_projects_by_region_id(region_id, area=0.5):
     """
