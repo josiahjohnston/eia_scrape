@@ -11,7 +11,7 @@ http://stackoverflow.com/questions/16694907/how-to-download-large-file-in-python
 import datetime
 import getpass
 import hashlib
-import os
+import os, sys
 import psycopg2
 import requests
 import zipfile
@@ -53,8 +53,8 @@ def unzip(file_list):
 
 
 def connect_to_db_and_run_query(query, database='postgres', host='localhost', port=5433):
-    user = getpass.getpass('Enter username for database {}:'.format(database))
-    password = getpass.getpass('Enter database password for user {}:'.format(user))
+    user = 'bmaluenda'#getpass.getpass('Enter username for database {}:'.format(database))
+    password = 'duck20.Cornell'#getpass.getpass('Enter database password for user {}:'.format(user))
     try:
         con = psycopg2.connect(database=database, user=user, host=host,
             port=port, password=password)
@@ -76,4 +76,9 @@ def connect_to_db_and_run_query(query, database='postgres', host='localhost', po
     cur.close()
     con.close()
     print 'Database connection closed.'
-        
+
+
+def append_historic_output_to_csv(fpath, df):
+        write_header = not os.path.isfile(fpath)
+        with open(fpath, 'ab') as outfile:
+            df.to_csv(outfile, sep='\t', header=write_header, encoding='utf-8', index=False)

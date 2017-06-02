@@ -28,7 +28,7 @@ from calendar import monthrange
 
 
 # Update the reference to the utils module after this becomes a package
-from utils import download_file, download_metadata_fields, unzip
+from utils import download_file, download_metadata_fields, unzip, append_historic_output_to_csv
 
 unzip_directory = 'downloads'
 pickle_directory = 'pickle_data'
@@ -313,11 +313,6 @@ def parse_eia923_data(directory):
     hydro_generation = hydro_generation[column_order]
     fuel_based_generation = fuel_based_generation[column_order]
 
-    def append_historic_output_to_csv(fname, df):
-        output_path = os.path.join(outputs_directory, fname)
-        write_header = not os.path.isfile(output_path)
-        with open(output_path, 'ab') as outfile:
-            df.to_csv(outfile, sep='\t', header=write_header, encoding='utf-8', index=False)
 
     #############################
     # Save hydro profiles
@@ -343,7 +338,8 @@ def parse_eia923_data(directory):
             hydro_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)].div(
             monthrange(int(year),month)[1]*24*hydro_outputs['Nameplate Capacity (MW)'])
 
-    append_historic_output_to_csv('historic_hydro_capacity_factors_WIDE.tab', hydro_outputs)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'historic_hydro_capacity_factors_WIDE.tab'), hydro_outputs)
     print "\nSaved hydro capacity factor data in wide format for {}.".format(year)
 
     ###############
@@ -375,7 +371,8 @@ def parse_eia923_data(directory):
     hydro_outputs_narrow = hydro_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
-    append_historic_output_to_csv('historic_hydro_capacity_factors_NARROW.tab', hydro_outputs_narrow)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'historic_hydro_capacity_factors_NARROW.tab'), hydro_outputs_narrow)
     print "Saved {} hydro capacity factor records in narrow format for {}.\n".format(
         len(hydro_outputs_narrow), year)
 
@@ -457,7 +454,8 @@ def parse_eia923_data(directory):
     # Filter records of consistently negative heat rates throughout the year
     negative_filter = (heat_rate_outputs <= 0).filter(regex=r'Heat Rate').all(axis=1)
     negative_heat_rate_outputs = heat_rate_outputs[negative_filter]
-    append_historic_output_to_csv('negative_heat_rate_outputs.tab', negative_heat_rate_outputs)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'negative_heat_rate_outputs.tab'), negative_heat_rate_outputs)
     heat_rate_outputs = heat_rate_outputs[~negative_filter]
     print ("Removed {} records of consistently negative heat rates and saved"
         " them to negative_heat_rate_outputs.tab".format(
@@ -467,7 +465,8 @@ def parse_eia923_data(directory):
     heat_rate_outputs.loc[:,'Minimum Heat Rate'] = heat_rate_outputs[
         heat_rate_outputs>0].filter(regex=r'Heat Rate').min(axis=1)
 
-    append_historic_output_to_csv('historic_heat_rates_WIDE.tab', heat_rate_outputs)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'historic_heat_rates_WIDE.tab'), heat_rate_outputs)
     print "\nSaved heat rate data in wide format for {}.".format(year)
 
     ###############
@@ -511,7 +510,8 @@ def parse_eia923_data(directory):
     heat_rate_outputs_narrow = heat_rate_outputs_narrow.astype(
             {c: int for c in ['Month', 'Year', 'Plant Code']})
 
-    append_historic_output_to_csv('historic_heat_rates_NARROW.tab', heat_rate_outputs_narrow)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'historic_heat_rates_NARROW.tab'), heat_rate_outputs_narrow)
     print "Saved {} heat rate records in narrow format for {}.".format(
         len(heat_rate_outputs_narrow), year)
 
@@ -526,7 +526,8 @@ def parse_eia923_data(directory):
             indices_to_drop.append(int(row[0]))
     multi_fuel_heat_rate_outputs = multi_fuel_heat_rate_outputs.drop(indices_to_drop)
 
-    append_historic_output_to_csv('multi_fuel_heat_rates.tab', multi_fuel_heat_rate_outputs)
+    append_historic_output_to_csv(
+        os.path.join(outputs_directory,'multi_fuel_heat_rates.tab'), multi_fuel_heat_rate_outputs)
     print ("\n{} records show use of multiple fuels (more than 5% of the secondary fuel in the year). "
             "Saved them to multi_fuel_heat_rates.tab".format(len(multi_fuel_heat_rate_outputs)))
     print "{} correspond to plants located in WECC states and totalize {} MW of capacity".format(
