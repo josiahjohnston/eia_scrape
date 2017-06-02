@@ -41,21 +41,6 @@ def pull_generation_projects_data():
     return db_gens
 
 def explore_heat_rates():
-    # heat_rate_outputs = pd.read_csv(
-    #     os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t')
-    # heat_rate_outputs = heat_rate_outputs[heat_rate_outputs['Year']==2015]
-    # heat_rate_outputs.rename(columns={'Plant Name':'name'}, inplace=True)
-    # db_gen_projects = pull_generation_projects_data()
-    # name_intersection = heat_rate_outputs[heat_rate_outputs['name'].isin(
-    #     db_gen_projects['name'])]['name']
-
-    # df = pd.merge(
-    #     db_gen_projects[db_gen_projects['name'].isin(
-    #         name_intersection)][['name','gen_tech','energy_source','full_load_heat_rate']],
-    #     heat_rate_outputs[heat_rate_outputs['name'].isin(
-    #         name_intersection)][['name','Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2']],
-    #     how='right', on='name')
-
     db_gen_projects = pull_generation_projects_data().rename(columns={'name':'Plant Name', 'gen_tech':'Prime Mover'})
     db_gen_projects.loc[:,'Prime Mover'].replace(
         {
@@ -74,9 +59,10 @@ def explore_heat_rates():
         inplace=True)
     eia_gen_projects = filter_projects_by_region_id(13)
 
-    df = pd.merge(db_gen_projects, eia_gen_projects, on=['Plant Name','Prime Mover'], how='inner').loc[:,[
+    df = pd.merge(db_gen_projects, eia_gen_projects,
+        on=['Plant Name','Prime Mover'], how='left').loc[:,[
         'Plant Name','gen_tech','energy_source','full_load_heat_rate',
-        'Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2']]
+        'Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2','Operating Year']]
     df = df[df['full_load_heat_rate']>0]
 
     print "\nPrinting intersection of DB and EIA generation projects that have a specified heat rate to heat_rate_comparison.tab"
