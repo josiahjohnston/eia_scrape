@@ -19,9 +19,6 @@ from utils import connect_to_db_and_run_query, append_historic_output_to_csv
 from IPython import embed
 
 coal_codes = ['ANT','BIT','LIG','SGC','SUB','WC','RC']
-misspelled_counties = [
-    'Claveras'
-    ]
 
 
 def pull_generation_projects_data():
@@ -194,9 +191,11 @@ def filter_projects_by_region_id(region_id, area=0.5):
         len(proposed_gens), proposed_gens['Nameplate Capacity (MW)'].sum()/1000.0)
     print "======="
 
-    print "\nThere are {} existing projects that are not solar, wind, hydro or batteries.".format(
+    print "\nThere are {} existing projects that are not solar, wind, hydro or batteries that sum up to {} GW.".format(
         len(existing_gens[~existing_gens['Energy Source'].isin(
-            ['SUN','WND','WAT','MWH'])]))
+            ['SUN','WND','WAT','MWH'])]),
+        existing_gens[~existing_gens['Energy Source'].isin(
+            ['SUN','WND','WAT','MWH'])]['Nameplate Capacity (MW)'].sum()/1000)
     heat_rate_data = pd.read_csv(
         os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t').rename(
         columns={'Plant Code':'EIA Plant Code'})
@@ -207,7 +206,7 @@ def filter_projects_by_region_id(region_id, area=0.5):
         on=['EIA Plant Code','Prime Mover','Energy Source']).drop_duplicates()
 
     thermal_gens = generators[~generators['Minimum Heat Rate'].isnull()]
-    print "There is heat rate data for {} of these generators".format(len(thermal_gens))
+    print "There is heat rate data for {} of these generators, totalizing {} GW of capacity".format(len(thermal_gens), thermal_gens['Nameplate Capacity (MW)'].sum()/1000)
     append_historic_output_to_csv(
         os.path.join('processed_data','gens_wo_heat_rate.tab'),
         generators[
