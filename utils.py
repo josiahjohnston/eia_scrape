@@ -53,8 +53,8 @@ def unzip(file_list):
 
 
 def connect_to_db_and_run_query(query, database='postgres', host='localhost', port=5433):
-    user = 'bmaluenda'#getpass.getpass('Enter username for database {}:'.format(database))
-    password = 'duck20.Cornell'#getpass.getpass('Enter database password for user {}:'.format(user))
+    user = getpass.getpass('Enter username for database {}:'.format(database))
+    password = getpass.getpass('Enter database password for user {}:'.format(user))
     try:
         con = psycopg2.connect(database=database, user=user, host=host,
             port=port, password=password)

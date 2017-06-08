@@ -314,6 +314,12 @@ def assign_heat_rates_to_projects(generators, year):
     existing_gens = pd.merge(existing_gens, thermal_gens, on=list(existing_gens.columns), how='left')
 
 
+    # Plot histograms for resulting heat rates per technology and fuel
+    from ggplot import *
+    thermal_gens["Technology"] = thermal_gens["Energy Source"].map(str) + ' ' + thermal_gens["Prime Mover"]
+    p = ggplot(aes(x='value',fill='Technology'), data=meat_lng) + geom_histogram(binwidth=0.5) + facet_wrap("Technology")  + ylim(0,20)
+    p.save('heat_rate_distributions.pdf')
+
     proposed_gens = generators[generators['Operational Status']=='Proposed']
     thermal_proposed_gens = proposed_gens[proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
     other_proposed_gens = proposed_gens[~proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
@@ -329,17 +335,6 @@ def assign_heat_rates_to_projects(generators, year):
             thermal_gens_w_hr, pm, es, year)
 
     proposed_gens = pd.concat([thermal_proposed_gens,other_proposed_gens], axis=0)
-
-
-    #fig,axes = plt.subplots(2,2,figsize=7,7)
-    #nominal_heat_rates = generators[~generators['Best Heat Rate'].isnull()]['Best Heat Rate']
-    #for i,pm in enumerate(['CC','GT','IC','ST']):
-    #    axes[0,0].hist(nominal_heat_rates, bins=tuple(i for i in range(0,50,1)))
-    #    ax.set_title('')
-    #    ax.set_xlabel(xlabel)
-    #    ax.set_ylabel(ylabel)
-    #    ax.set_xlim((-xlim,xlim))
-    #    ax.plot((0,0),(0,ax.get_ylim()[1]), linewidth=0.4, color='black')
 
     return pd.concat([existing_gens, proposed_gens], axis=0)
 
