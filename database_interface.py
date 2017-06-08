@@ -19,6 +19,7 @@ from utils import connect_to_db_and_run_query, append_historic_output_to_csv
 from IPython import embed
 
 coal_codes = ['ANT','BIT','LIG','SGC','SUB','WC','RC']
+outputs_directory = 'processed_data'
 
 
 def pull_generation_projects_data():
@@ -70,7 +71,7 @@ def explore_heat_rates():
 
     return df
 
-def filter_projects_by_region_id(region_id, area=0.5):
+def filter_projects_by_region_id(region_id, year, area=0.5):
     """
     Filters generation project data by NERC Region and assigns Regions to rows
     that do not have one, according to their County and State. Rows will get
@@ -137,8 +138,8 @@ def filter_projects_by_region_id(region_id, area=0.5):
     print "Getting region name from database..."
     query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(
         region_id)
-    region_name = 'WECC'#connect_to_db_and_run_query(query=query,
-        #database='switch_gis')['regionabr'][0]
+    region_name = connect_to_db_and_run_query(query=query,
+        database='switch_gis')['regionabr'][0]
     counties_path = os.path.join('other_data', '{}_counties.tab'.format(region_name))
     
     if not os.path.exists(counties_path):
@@ -160,7 +161,7 @@ def filter_projects_by_region_id(region_id, area=0.5):
         region_counties = pd.read_csv(counties_path, sep='\t', index_col=None)
 
     generators = pd.read_csv(
-        os.path.join('processed_data','generation_projects_2015.tab'), sep='\t')
+        os.path.join('processed_data','generation_projects_{}.tab'.format(year)), sep='\t')
     generators.loc[:,'County'] = generators['County'].map(lambda c: str(c).title())
 
     print "\nRead in data for {} generators, of which:".format(len(generators))
@@ -194,7 +195,7 @@ def filter_projects_by_region_id(region_id, area=0.5):
     return generators
 
 
-def assign_heat_rates_to_projects(generators):
+def assign_heat_rates_to_projects(generators, year):
     existing_gens = generators[generators['Operational Status']=='Operable']
     print "-------------------------------------"
     print "There are {} existing thermal projects that sum up to {:.2f} GW.".format(
@@ -204,7 +205,7 @@ def assign_heat_rates_to_projects(generators):
     heat_rate_data = pd.read_csv(
         os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t').rename(
         columns={'Plant Code':'EIA Plant Code'})
-    heat_rate_data = heat_rate_data[heat_rate_data['Year']==2015]
+    heat_rate_data = heat_rate_data[heat_rate_data['Year']==year]
     thermal_gens = pd.merge(
         existing_gens, heat_rate_data[['EIA Plant Code','Prime Mover','Energy Source','Best Heat Rate']],
         how='left', suffixes=('',''),
@@ -322,7 +323,7 @@ def assign_heat_rates_to_projects(generators):
         es = thermal_proposed_gens.loc[idx,'Energy Source']
         #print "{}\t{}\t{}\t{}".format(pm,es,v,calculate_avg_heat_rate(thermal_gens_w_hr, pm, es, v))
         thermal_proposed_gens.loc[idx,'Best Heat Rate'] = calculate_avg_heat_rate(
-            thermal_gens_w_hr, pm, es, 2015)
+            thermal_gens_w_hr, pm, es, year)
 
     proposed_gens = pd.concat([thermal_proposed_gens,other_proposed_gens], axis=0)
 
@@ -338,3 +339,39 @@ def assign_heat_rates_to_projects(generators):
     #    ax.plot((0,0),(0,ax.get_ylim()[1]), linewidth=0.4, color='black')
 
     return pd.concat([existing_gens, proposed_gens], axis=0)
+
+
+def finish_project_processing(year):
+    generators = filter_projects_by_region_id(13, year)
+    generators = assign_heat_rates_to_projects(generators, year)
+    existing_gens = generators[generators['Operational Status']=='Operable']
+    proposed_gens = generators[generators['Operational Status']=='Proposed']
+
+    fname = 'existing_generation_projects_{}.tab'.format(year)
+    with open(os.path.join(outputs_directory, fname),'w') as f:
+        existing_gens.to_csv(f, sep='\t', encoding='utf-8', index=False)
+
+    uprates = pd.DataFrame()
+    new_gens = pd.DataFrame()
+    for idx in proposed_gens.index:
+        pc = proposed_gens.loc[idx,'EIA Plant Code']
+        pm = proposed_gens.loc[idx,'Prime Mover']
+        es = proposed_gens.loc[idx,'Energy Source']
+        existing_units_for_proposed_gen = existing_gens[
+        (existing_gens['EIA Plant Code'] == pc) &
+        (existing_gens['Prime Mover'] == pm) &
+        (existing_gens['Energy Source'] == es)]
+        if len(existing_units_for_proposed_gen) == 0:
+            new_gens = pd.concat([new_gens, pd.DataFrame(proposed_gens.loc[idx,:]).T], axis=0)
+        elif len(existing_units_for_proposed_gen) == 1:
+            uprates = pd.concat([uprates, pd.DataFrame(proposed_gens.loc[idx,:]).T], axis=0)
+        else:
+            print "There is more than one option for uprating plant id {}, prime mover {} and energy source {}".format(pc, pm, es)
+
+    fname = 'new_generation_projects_{}.tab'.format(year)
+    with open(os.path.join(outputs_directory, fname),'w') as f:
+        new_gens.to_csv(f, sep='\t', encoding='utf-8', index=False)
+
+    fname = 'uprates_to_generation_projects_{}.tab'.format(year)
+    with open(os.path.join(outputs_directory, fname),'w') as f:
+        uprates.to_csv(f, sep='\t', encoding='utf-8', index=False)
