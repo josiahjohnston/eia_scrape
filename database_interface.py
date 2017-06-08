@@ -198,7 +198,7 @@ def filter_projects_by_region_id(region_id, year, area=0.5):
 def assign_heat_rates_to_projects(generators, year):
     existing_gens = generators[generators['Operational Status']=='Operable']
     print "-------------------------------------"
-    print "There are {} existing thermal projects that sum up to {:.2f} GW.".format(
+    print "There are {} existing thermal projects that sum up to {:.1f} GW.".format(
         len(existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]),
         existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])][
             'Nameplate Capacity (MW)'].sum()/1000)
@@ -245,10 +245,10 @@ def assign_heat_rates_to_projects(generators, year):
             (thermal_gens['Best Heat Rate'] < 8.607)) |
         ((thermal_gens['Energy Source'] != 'Coal') &
             (thermal_gens['Best Heat Rate'] < 6.711)))
-    print "{} generators don't have heat rate data specified".format(
-        len(thermal_gens[null_heat_rates]))
-    print "{} generators have better heat rate than the best historical records\n".format(
-        len(thermal_gens[unrealistic_heat_rates]))
+    print "{} generators don't have heat rate data specified ({:.1f} GW of capacity)".format(
+        len(thermal_gens[null_heat_rates]), thermal_gens[null_heat_rates]['Nameplate Capacity (MW)'].sum()/1000.0)
+    print "{} generators have better heat rate than the best historical records ({} GW of capacity)\n".format(
+        len(thermal_gens[unrealistic_heat_rates]), thermal_gens[unrealistic_heat_rates]['Nameplate Capacity (MW)'].sum()/1000.0)
     thermal_gens_w_hr = thermal_gens[~null_heat_rates & ~unrealistic_heat_rates]
     thermal_gens_wo_hr = thermal_gens[null_heat_rates | unrealistic_heat_rates]
 
@@ -263,13 +263,16 @@ def assign_heat_rates_to_projects(generators, year):
     #             len(thermal_gens_wo_hr[(thermal_gens_wo_hr['Energy Source']==fuel) &
     #                 (thermal_gens_wo_hr['Prime Mover']==prime_mover)]),prime_mover)
 
-    print "Assigning max/min heat rates per technology and fuel to top .5% / bottom .5%, respectively..."
+    print "Assigning max/min heat rates per technology and fuel to top .5% / bottom .5%, respectively:"
     n_outliers = int(len(thermal_gens_w_hr)*0.008)
     thermal_gens_w_hr = thermal_gens_w_hr.sort_values('Best Heat Rate')
     min_hr = thermal_gens_w_hr.loc[thermal_gens_w_hr.index[n_outliers],'Best Heat Rate']
-    print "Minimum heat rate is {}".format(min_hr)
     max_hr = thermal_gens_w_hr.loc[thermal_gens_w_hr.index[-1-n_outliers],'Best Heat Rate']
-    print "Maximum heat rate is {}".format(max_hr)
+    print "(Total capacity of these plants is {:.1f} GW)".format(
+        thermal_gens_w_hr[thermal_gens_w_hr['Best Heat Rate'] < min_hr]['Nameplate Capacity (MW)'].sum()/1000.0 +
+        thermal_gens_w_hr[thermal_gens_w_hr['Best Heat Rate'] > max_hr]['Nameplate Capacity (MW)'].sum()/1000.0)
+    print "Minimum heat rate is {:.3f}".format(min_hr)
+    print "Maximum heat rate is {:.3f}".format(max_hr)
     for i in range(n_outliers):
         thermal_gens_w_hr.loc[thermal_gens_w_hr.index[i],'Best Heat Rate'] = min_hr
         thermal_gens_w_hr.loc[thermal_gens_w_hr.index[-1-i],'Best Heat Rate'] = max_hr
