@@ -59,7 +59,7 @@ def explore_heat_rates():
     df = pd.merge(db_gen_projects, eia_gen_projects,
         on=['Plant Name','Prime Mover'], how='left').loc[:,[
         'Plant Name','gen_tech','energy_source','full_load_heat_rate',
-        'Minimum Heat Rate','Prime Mover','Energy Source','Energy Source 2','Operating Year']]
+        'Best Heat Rate','Prime Mover','Energy Source','Energy Source 2','Operating Year']]
     df = df[df['full_load_heat_rate']>0]
 
     print "\nPrinting intersection of DB and EIA generation projects that have a specified heat rate to heat_rate_comparison.tab"
@@ -137,8 +137,8 @@ def filter_projects_by_region_id(region_id, area=0.5):
     print "Getting region name from database..."
     query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(
         region_id)
-    region_name = connect_to_db_and_run_query(query=query,
-        database='switch_gis')['regionabr'][0]
+    region_name = 'WECC'#connect_to_db_and_run_query(query=query,
+        #database='switch_gis')['regionabr'][0]
     counties_path = os.path.join('other_data', '{}_counties.tab'.format(region_name))
     
     if not os.path.exists(counties_path):
@@ -158,7 +158,7 @@ def filter_projects_by_region_id(region_id, area=0.5):
     else:
         print "Reading counties from .tab file..."
         region_counties = pd.read_csv(counties_path, sep='\t', index_col=None)
-    
+
     generators = pd.read_csv(
         os.path.join('processed_data','generation_projects_2015.tab'), sep='\t')
     generators.loc[:,'County'] = generators['County'].map(lambda c: str(c).title())
@@ -191,35 +191,150 @@ def filter_projects_by_region_id(region_id, area=0.5):
         len(proposed_gens), proposed_gens['Nameplate Capacity (MW)'].sum()/1000.0)
     print "======="
 
-    print "\nThere are {} existing projects that are not solar, wind, hydro or batteries that sum up to {} GW.".format(
-        len(existing_gens[~existing_gens['Energy Source'].isin(
-            ['SUN','WND','WAT','MWH'])]),
-        existing_gens[~existing_gens['Energy Source'].isin(
-            ['SUN','WND','WAT','MWH'])]['Nameplate Capacity (MW)'].sum()/1000)
+    return generators
+
+
+def assign_heat_rates_to_projects(generators):
+    existing_gens = generators[generators['Operational Status']=='Operable']
+    print "-------------------------------------"
+    print "There are {} existing thermal projects that sum up to {:.2f} GW.".format(
+        len(existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]),
+        existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])][
+            'Nameplate Capacity (MW)'].sum()/1000)
     heat_rate_data = pd.read_csv(
         os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t').rename(
         columns={'Plant Code':'EIA Plant Code'})
     heat_rate_data = heat_rate_data[heat_rate_data['Year']==2015]
-    generators = pd.merge(
-        existing_gens, heat_rate_data[['EIA Plant Code','Prime Mover','Energy Source','Minimum Heat Rate']],
+    thermal_gens = pd.merge(
+        existing_gens, heat_rate_data[['EIA Plant Code','Prime Mover','Energy Source','Best Heat Rate']],
         how='left', suffixes=('',''),
         on=['EIA Plant Code','Prime Mover','Energy Source']).drop_duplicates()
 
-    thermal_gens = generators[~generators['Minimum Heat Rate'].isnull()]
-    print "There is heat rate data for {} of these generators, totalizing {} GW of capacity".format(len(thermal_gens), thermal_gens['Nameplate Capacity (MW)'].sum()/1000)
-    append_historic_output_to_csv(
-        os.path.join('processed_data','gens_wo_heat_rate.tab'),
-        generators[
-        (generators['Minimum Heat Rate'].isnull()) &
-        (~generators['Energy Source'].isin(['SUN','WND','WAT','MWH']))])
-    print "(Generators without heat rate data were printed to gens_wo_heat_rate.tab)"
-    print "{} of these records are below 30 MMBTU/MWh".format(len(thermal_gens[thermal_gens['Minimum Heat Rate'] <= 30]))
-    print "There is heat rate data for {} generators that are not solar, wind, hydro or batteries.".format(
-        len(thermal_gens[~thermal_gens['Energy Source'].isin(
-            ['SUN','WND','WAT','MWH'])]))
-    thermal_gens = thermal_gens[thermal_gens['Minimum Heat Rate'] <= 30]
-    print "Weighted heat rate average of these generators: {:.3f} MMBTU/MWh".format(
-        thermal_gens['Minimum Heat Rate'].dot(thermal_gens['Nameplate Capacity (MW)'])/thermal_gens['Nameplate Capacity (MW)'].sum())
 
-    return generators
+    thermal_gens = thermal_gens[thermal_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
+    fuels = {
+        'LFG':'Bio_Gas',
+        'OBG':'Bio_Gas',
+        'AB':'Bio_Solid',
+        'BLQ':'Bio_Liquid',
+        'NG':'Gas',
+        'OG':'Gas',
+        'PG':'Gas',
+        'DFO':'DistillateFuelOil',
+        'JF':'ResidualFuelOil',
+        'COAL':'Coal',
+        'GEO':'Geothermal',
+        'NUC':'Nuclear',
+        'PC':'Coal',
+        'SUN':'Solar',
+        'WDL':'Bio_Liquid',
+        'WDS':'Bio_Solid',
+        'MSW':'Bio_Solid',
+        'PUR':'Purchased_Steam',
+        'WH':'Waste_Heat',
+        'OTH':'Other'
+    }
+    thermal_gens = thermal_gens.replace({'Energy Source':fuels})
+    existing_gens = existing_gens.replace({'Energy Source':fuels})
 
+    # Replace null and unrealistic heat rates by average values per technology,
+    # fuel, and vintage. Also, set HR of top and bottom .5% to max and min
+    null_heat_rates = thermal_gens['Best Heat Rate'].isnull()
+    unrealistic_heat_rates = (((thermal_gens['Energy Source'] == 'Coal') &
+            (thermal_gens['Best Heat Rate'] < 8.607)) |
+        ((thermal_gens['Energy Source'] != 'Coal') &
+            (thermal_gens['Best Heat Rate'] < 6.711)))
+    print "{} generators don't have heat rate data specified".format(
+        len(thermal_gens[null_heat_rates]))
+    print "{} generators have better heat rate than the best historical records\n".format(
+        len(thermal_gens[unrealistic_heat_rates]))
+    thermal_gens_w_hr = thermal_gens[~null_heat_rates & ~unrealistic_heat_rates]
+    thermal_gens_wo_hr = thermal_gens[null_heat_rates | unrealistic_heat_rates]
+
+    # Print fuels and technologies with missing HR to console
+
+    # for fuel in thermal_gens_wo_hr['Energy Source'].unique():
+    #     print "{} of these use {} as their fuel".format(
+    #         len(thermal_gens_wo_hr[thermal_gens_wo_hr['Energy Source']==fuel]),fuel)
+    #     print "Technologies:"
+    #     for prime_mover in thermal_gens_wo_hr[thermal_gens_wo_hr['Energy Source']==fuel]['Prime Mover'].unique():
+    #         print "\t{} use {}".format(
+    #             len(thermal_gens_wo_hr[(thermal_gens_wo_hr['Energy Source']==fuel) &
+    #                 (thermal_gens_wo_hr['Prime Mover']==prime_mover)]),prime_mover)
+
+    print "Assigning max/min heat rates per technology and fuel to top .5% / bottom .5%, respectively..."
+    n_outliers = int(len(thermal_gens_w_hr)*0.008)
+    thermal_gens_w_hr = thermal_gens_w_hr.sort_values('Best Heat Rate')
+    min_hr = thermal_gens_w_hr.loc[thermal_gens_w_hr.index[n_outliers],'Best Heat Rate']
+    print "Minimum heat rate is {}".format(min_hr)
+    max_hr = thermal_gens_w_hr.loc[thermal_gens_w_hr.index[-1-n_outliers],'Best Heat Rate']
+    print "Maximum heat rate is {}".format(max_hr)
+    for i in range(n_outliers):
+        thermal_gens_w_hr.loc[thermal_gens_w_hr.index[i],'Best Heat Rate'] = min_hr
+        thermal_gens_w_hr.loc[thermal_gens_w_hr.index[-1-i],'Best Heat Rate'] = max_hr
+
+
+    def calculate_avg_heat_rate(thermal_gens_df, prime_mover, energy_source, vintage, window=2):
+        similar_generators = thermal_gens_df[
+            (thermal_gens_df['Prime Mover']==prime_mover) &
+            (thermal_gens_df['Energy Source']==energy_source) &
+            (thermal_gens_df['Operating Year']>=vintage-window) &
+            (thermal_gens_df['Operating Year']<=vintage+window)]
+        while len(similar_generators) < 4:
+            window += 2
+            similar_generators = thermal_gens_df[
+                (thermal_gens_df['Prime Mover']==prime_mover) &
+                (thermal_gens_df['Energy Source']==energy_source) &
+                (thermal_gens_df['Operating Year']>=vintage-window) &
+                (thermal_gens_df['Operating Year']<=vintage+window)]
+            # Gens span from 1925 to 2015, so a window of 90 years is the maximum
+            if window >= 90:
+                break
+        if len(similar_generators) > 0:
+            return similar_generators['Best Heat Rate'].mean()
+        else:
+            # If no other similar projects exist, return average of technology
+            return thermal_gens_df[thermal_gens_df['Prime Mover']==prime_mover]['Best Heat Rate'].mean()
+
+
+    print "Assigning average heat rates per technology, fuel, and vintage to projects w/o heat rate..."
+    for idx in thermal_gens_wo_hr.index:
+        pm = thermal_gens_wo_hr.loc[idx,'Prime Mover']
+        es = thermal_gens_wo_hr.loc[idx,'Energy Source']
+        v = thermal_gens_wo_hr.loc[idx,'Operating Year']
+        #print "{}\t{}\t{}\t{}".format(pm,es,v,calculate_avg_heat_rate(thermal_gens_w_hr, pm, es, v))
+        thermal_gens_wo_hr.loc[idx,'Best Heat Rate'] = calculate_avg_heat_rate(
+            thermal_gens_w_hr, pm, es, v)
+
+    thermal_gens = pd.concat([thermal_gens_w_hr, thermal_gens_wo_hr], axis=0)
+    existing_gens = pd.merge(existing_gens, thermal_gens, on=list(existing_gens.columns), how='left')
+
+
+    proposed_gens = generators[generators['Operational Status']=='Proposed']
+    thermal_proposed_gens = proposed_gens[proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
+    other_proposed_gens = proposed_gens[~proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
+    print "-------------------------------------"
+    print "There are {} proposed thermal projects that sum up to {:.2f} GW.".format(
+        len(thermal_proposed_gens), thermal_proposed_gens['Nameplate Capacity (MW)'].sum()/1000)
+    print "Assigning average heat rate of technology and fuel of most recent years..."
+    for idx in thermal_proposed_gens.index:
+        pm = thermal_proposed_gens.loc[idx,'Prime Mover']
+        es = thermal_proposed_gens.loc[idx,'Energy Source']
+        #print "{}\t{}\t{}\t{}".format(pm,es,v,calculate_avg_heat_rate(thermal_gens_w_hr, pm, es, v))
+        thermal_proposed_gens.loc[idx,'Best Heat Rate'] = calculate_avg_heat_rate(
+            thermal_gens_w_hr, pm, es, 2015)
+
+    proposed_gens = pd.concat([thermal_proposed_gens,other_proposed_gens], axis=0)
+
+
+    #fig,axes = plt.subplots(2,2,figsize=7,7)
+    #nominal_heat_rates = generators[~generators['Best Heat Rate'].isnull()]['Best Heat Rate']
+    #for i,pm in enumerate(['CC','GT','IC','ST']):
+    #    axes[0,0].hist(nominal_heat_rates, bins=tuple(i for i in range(0,50,1)))
+    #    ax.set_title('')
+    #    ax.set_xlabel(xlabel)
+    #    ax.set_ylabel(ylabel)
+    #    ax.set_xlim((-xlim,xlim))
+    #    ax.plot((0,0),(0,ax.get_ylim()[1]), linewidth=0.4, color='black')
+
+    return pd.concat([existing_gens, proposed_gens], axis=0)

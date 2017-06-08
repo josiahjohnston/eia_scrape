@@ -461,9 +461,10 @@ def parse_eia923_data(directory):
         " them to negative_heat_rate_outputs.tab".format(
         len(negative_heat_rate_outputs)))
 
-    # Get the best heat rate in a separate column
-    heat_rate_outputs.loc[:,'Minimum Heat Rate'] = heat_rate_outputs[
-        heat_rate_outputs>0].filter(regex=r'Heat Rate').min(axis=1)
+    # Get the second best heat rate in a separate column
+    heat_rate_outputs.reset_index(inplace=True)
+    heat_rate_outputs.loc[:,'Best Heat Rate'] = pd.DataFrame(np.sort(heat_rate_outputs.replace([0,float('inf')],float('nan'))[
+        heat_rate_outputs>0].filter(regex=r'Heat Rate'))).iloc[:,1]
 
     append_historic_output_to_csv(
         os.path.join(outputs_directory,'historic_heat_rates_WIDE.tab'), heat_rate_outputs)
@@ -546,17 +547,17 @@ def parse_eia923_data(directory):
 
 
     fig, ax = plt.subplots(1, figsize=(6,5))
-    ax.hist(heat_rate_outputs[heat_rate_outputs['Minimum Heat Rate'] <= 30]['Minimum Heat Rate'].values,
+    ax.hist(heat_rate_outputs[heat_rate_outputs['Best Heat Rate'] <= 30]['Best Heat Rate'].values,
             bins=tuple(i/2.0 for i in range(0,61,1)))
-    ax.set_title('Minimum heat rates for all processed EIA923 data')
+    ax.set_title('Best Heat Rates for all processed EIA923 data')
     ax.set_xlabel(u'Heat Rate (MMBTU/MWh)')
     ax.set_ylabel('Frequency')
     ax.set_xlim((0,30))
     plt.savefig('Heat_rate_histogram.pdf', bbox_inches='tight')
 
-    print "\nSaved Figure with histogram of minimum heat rates."
+    print "\nSaved Figure with histogram of Best Heat Rates."
     print "{} records of heat rates greater than 30 MMBTU/MWh were left out".format(
-        len(heat_rate_outputs[heat_rate_outputs['Minimum Heat Rate'] > 30]))
+        len(heat_rate_outputs[heat_rate_outputs['Best Heat Rate'] > 30]))
 
 
 def parse_eia860_data(directory):
