@@ -71,7 +71,7 @@ def explore_heat_rates():
 
     return df
 
-def filter_projects_by_region_id(region_id, year, area=0.5):
+def filter_projects_by_region_id(region_id, year, host='localhost', area=0.5):
     """
     Filters generation project data by NERC Region and assigns Regions to rows
     that do not have one, according to their County and State. Rows will get
@@ -139,7 +139,7 @@ def filter_projects_by_region_id(region_id, year, area=0.5):
     query = "SELECT regionabr FROM ventyx_nerc_reg_region WHERE gid={}".format(
         region_id)
     region_name = connect_to_db_and_run_query(query=query,
-        database='switch_gis')['regionabr'][0]
+        database='switch_gis', host=host)['regionabr'][0]
     counties_path = os.path.join('other_data', '{}_counties.tab'.format(region_name))
     
     if not os.path.exists(counties_path):
@@ -153,7 +153,7 @@ def filter_projects_by_region_id(region_id, year, area=0.5):
                  ST_Area(cts.the_geom)>={}".format(region_id, area)
         print "\nGetting counties and states for the region from database..."
         region_counties = pd.DataFrame(connect_to_db_and_run_query(query=query,
-            database='switch_gis')).rename(columns={'name':'County','state':'State'})
+            database='switch_gis', host=host)).rename(columns={'name':'County','state':'State'})
         region_counties.replace(state_dict, inplace=True)
         region_counties.to_csv(counties_path, sep='\t', index=False)
     else:
@@ -378,3 +378,8 @@ def finish_project_processing(year):
     fname = 'uprates_to_generation_projects_{}.tab'.format(year)
     with open(os.path.join(outputs_directory, fname),'w') as f:
         uprates.to_csv(f, sep='\t', encoding='utf-8', index=False)
+
+def upload_generation_projects(year):
+    existing_gens = pd.read_csv(
+        os.path.join(outputs_directory,'existing_generation_projects_{}.tab'.format(year)),
+        sep='\t', encoding='utf-8', index=False)
