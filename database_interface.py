@@ -17,9 +17,12 @@ import os
 import pandas as pd
 from utils import connect_to_db_and_run_query, append_historic_output_to_csv
 from IPython import embed
+from ggplot import *
 
 coal_codes = ['ANT','BIT','LIG','SGC','SUB','WC','RC']
 outputs_directory = 'processed_data'
+# Disable false positive warnings from pandas
+pd.options.mode.chained_assignment = None
 
 
 def pull_generation_projects_data():
@@ -247,7 +250,7 @@ def assign_heat_rates_to_projects(generators, year):
             (thermal_gens['Best Heat Rate'] < 6.711)))
     print "{} generators don't have heat rate data specified ({:.1f} GW of capacity)".format(
         len(thermal_gens[null_heat_rates]), thermal_gens[null_heat_rates]['Nameplate Capacity (MW)'].sum()/1000.0)
-    print "{} generators have better heat rate than the best historical records ({} GW of capacity)\n".format(
+    print "{} generators have better heat rate than the best historical records ({} GW of capacity)".format(
         len(thermal_gens[unrealistic_heat_rates]), thermal_gens[unrealistic_heat_rates]['Nameplate Capacity (MW)'].sum()/1000.0)
     thermal_gens_w_hr = thermal_gens[~null_heat_rates & ~unrealistic_heat_rates]
     thermal_gens_wo_hr = thermal_gens[null_heat_rates | unrealistic_heat_rates]
@@ -262,7 +265,8 @@ def assign_heat_rates_to_projects(generators, year):
     #         print "\t{} use {}".format(
     #             len(thermal_gens_wo_hr[(thermal_gens_wo_hr['Energy Source']==fuel) &
     #                 (thermal_gens_wo_hr['Prime Mover']==prime_mover)]),prime_mover)
-
+    
+    print "-------------------------------------"
     print "Assigning max/min heat rates per technology and fuel to top .5% / bottom .5%, respectively:"
     n_outliers = int(len(thermal_gens_w_hr)*0.008)
     thermal_gens_w_hr = thermal_gens_w_hr.sort_values('Best Heat Rate')
@@ -301,6 +305,7 @@ def assign_heat_rates_to_projects(generators, year):
             return thermal_gens_df[thermal_gens_df['Prime Mover']==prime_mover]['Best Heat Rate'].mean()
 
 
+    print "-------------------------------------"
     print "Assigning average heat rates per technology, fuel, and vintage to projects w/o heat rate..."
     for idx in thermal_gens_wo_hr.index:
         pm = thermal_gens_wo_hr.loc[idx,'Prime Mover']
@@ -315,15 +320,13 @@ def assign_heat_rates_to_projects(generators, year):
 
 
     # Plot histograms for resulting heat rates per technology and fuel
-    from ggplot import *
     thermal_gens["Technology"] = thermal_gens["Energy Source"].map(str) + ' ' + thermal_gens["Prime Mover"]
-    p = ggplot(aes(x='value',fill='Technology'), data=meat_lng) + geom_histogram(binwidth=0.5) + facet_wrap("Technology")  + ylim(0,20)
-    p.save('heat_rate_distributions.pdf')
+    p = ggplot(aes(x='Best Heat Rate',fill='Technology'), data=thermal_gens) + geom_histogram(binwidth=0.5) + facet_wrap("Technology")  + ylim(0,30)
+    p.save(os.path.join(outputs_directory,'heat_rate_distributions.pdf'))
 
     proposed_gens = generators[generators['Operational Status']=='Proposed']
     thermal_proposed_gens = proposed_gens[proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
     other_proposed_gens = proposed_gens[~proposed_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
-    print "-------------------------------------"
     print "There are {} proposed thermal projects that sum up to {:.2f} GW.".format(
         len(thermal_proposed_gens), thermal_proposed_gens['Nameplate Capacity (MW)'].sum()/1000)
     print "Assigning average heat rate of technology and fuel of most recent years..."
@@ -334,6 +337,7 @@ def assign_heat_rates_to_projects(generators, year):
         thermal_proposed_gens.loc[idx,'Best Heat Rate'] = calculate_avg_heat_rate(
             thermal_gens_w_hr, pm, es, year)
 
+    other_proposed_gens['Best Heat Rate'] = float('nan')
     proposed_gens = pd.concat([thermal_proposed_gens,other_proposed_gens], axis=0)
 
     return pd.concat([existing_gens, proposed_gens], axis=0)
@@ -364,7 +368,7 @@ def finish_project_processing(year):
         elif len(existing_units_for_proposed_gen) == 1:
             uprates = pd.concat([uprates, pd.DataFrame(proposed_gens.loc[idx,:]).T], axis=0)
         else:
-            print "There is more than one option for uprating plant id {}, prime mover {} and energy source {}".format(pc, pm, es)
+            print "There is more than one option for uprating plant id {}, prime mover {} and energy source {}".format(int(pc), pm, es)
 
     fname = 'new_generation_projects_{}.tab'.format(year)
     with open(os.path.join(outputs_directory, fname),'w') as f:
@@ -374,7 +378,11 @@ def finish_project_processing(year):
     with open(os.path.join(outputs_directory, fname),'w') as f:
         uprates.to_csv(f, sep='\t', encoding='utf-8', index=False)
 
-def upload_generation_projects(year):
+def upload_generation_projects(year, host='localhost'):
     existing_gens = pd.read_csv(
         os.path.join(outputs_directory,'existing_generation_projects_{}.tab'.format(year)),
         sep='\t', encoding='utf-8', index=False)
+
+
+if __name__ == "__main__":
+    finish_project_processing(2015)

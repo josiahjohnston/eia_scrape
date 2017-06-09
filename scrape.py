@@ -57,7 +57,7 @@ gen_aggregation_lists = [
                         ]
 gen_relevant_data_for_last_year = ['Time From Cold Shutdown To Full Load',
                         'Latitude','Longitude','Balancing Authority Name',
-                        'Grid Voltage (kV)', 'Carbon Capture Technology']
+                        'Grid Voltage (kV)', 'Carbon Capture Technology', 'Cogen']
 gen_data_to_be_summed_for_last_year = ['Minimum Load (MW)']
 
 
@@ -68,6 +68,7 @@ def uniformize_names(df):
     df.rename(columns={
         'Sector':'Sector Number',
         'Carboncapture': 'Carbon Capture Technology',
+        'Associated With Combined Heat And Power System':'Cogen',
         'Carbon Capture Technology?':'Carbon Capture Technology',
         'Nameplate':'Nameplate Capacity (MW)',
         'Plant Id':'Plant Code',
@@ -544,20 +545,6 @@ def parse_eia923_data(directory):
         print "{} correspond to plants located in WECC states and totalize {} MW of capacity".format(
             len(multi_fuel_heat_rate_outputs[multi_fuel_heat_rate_outputs['State'].isin(wecc_states)]),
             multi_fuel_heat_rate_outputs[multi_fuel_heat_rate_outputs['State'].isin(wecc_states)]['Nameplate Capacity (MW)'].sum())
-
-
-    fig, ax = plt.subplots(1, figsize=(6,5))
-    ax.hist(heat_rate_outputs[heat_rate_outputs['Best Heat Rate'] <= 30]['Best Heat Rate'].values,
-            bins=tuple(i/2.0 for i in range(0,61,1)))
-    ax.set_title('Best Heat Rates for all processed EIA923 data')
-    ax.set_xlabel(u'Heat Rate (MMBTU/MWh)')
-    ax.set_ylabel('Frequency')
-    ax.set_xlim((0,30))
-    plt.savefig('Heat_rate_histogram.pdf', bbox_inches='tight')
-
-    print "\nSaved Figure with histogram of Best Heat Rates."
-    print "{} records of heat rates greater than 30 MMBTU/MWh were left out".format(
-        len(heat_rate_outputs[heat_rate_outputs['Best Heat Rate'] > 30]))
 
 
 def parse_eia860_data(directory):
