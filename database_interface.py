@@ -236,7 +236,10 @@ def assign_heat_rates_to_projects(generators, year):
         'MSW':'Bio_Solid',
         'PUR':'Purchased_Steam',
         'WH':'Waste_Heat',
-        'OTH':'Other'
+        'OTH':'Other',
+        'WAT':'Water',
+        'MWH':'Electricity',
+        'WND':'Wind'
     }
     thermal_gens = thermal_gens.replace({'Energy Source':fuels})
     existing_gens = existing_gens.replace({'Energy Source':fuels})
@@ -379,9 +382,42 @@ def finish_project_processing(year):
         uprates.to_csv(f, sep='\t', encoding='utf-8', index=False)
 
 def upload_generation_projects(year, host='localhost'):
-    existing_gens = pd.read_csv(
-        os.path.join(outputs_directory,'existing_generation_projects_{}.tab'.format(year)),
-        sep='\t', encoding='utf-8', index=False)
+def read_output_csv(fname):
+    try:
+        return pd.read_csv(os.path.join(outputs_directory,fname), sep='\t', index_col=None)
+    except:
+        print "Failed to read file {}. It will be considered to be empty.".format(fname)
+        return None
+existing_gens = read_output_csv('existing_generation_projects_{}.tab'.format(year))
+new_gens = read_output_csv('new_generation_projects_{}.tab'.format(year))
+uprates = read_output_csv('uprates_to_generation_projects_{}.tab'.format(year))
+
+
+not_recognized_energy_sources = ['Purchased_Steam','Waste_Heat','Other','Electricity']
+for df in [existing_gens, new_gens, uprates]:
+    # Plants with weird fuels need to be dropped or the Database will raise an error
+    # because of not recognized energy sources
+    print "Dropping projects that use energy sources that are not modeled,"
+    "totalizing {} GW of capacity" 
+    df.drop(df[df['Energy Source'].isin(
+        not_recognized_energy_sources)].index, inplace=True)
+    # Technology is a mixture of 
+    df
+# subir generadores
+# mezclar con load zones y agregar
+# subir agregados, con la ubicación del load zone
+# hacer copia de la tabla y rellenar la copia
+# reemplazar other por ng
+# purchased steam sacarlo
+# waste heat add to energy sources
+# filter out batteries (electriity) for simplicity
+# document all this
+# 
+database_column_renaming_dict = {
+    'Plant Name':'name',
+
+}
+
 
 
 if __name__ == "__main__":

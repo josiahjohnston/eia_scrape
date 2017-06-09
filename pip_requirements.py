@@ -6,3 +6,4 @@ SQLAlchemy
 psycopg2
 # matplotlib # Not necessary
 xlrd
+ggplot
