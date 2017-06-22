@@ -52,9 +52,11 @@ def unzip(file_list):
             print "Skipping "+unzip_name+" because it was already unzipped."
 
 
-def connect_to_db_and_run_query(query, database='postgres', host='localhost', port=5433):
-    user = getpass.getpass('Enter username for database {}:'.format(database))
-    password = getpass.getpass('Enter database password for user {}:'.format(user))
+def connect_to_db_and_push_df(df, col_formats, table, database='postgres', host='localhost', port=5433, user=None, password=None):
+    if user == None:
+        user = getpass.getpass('Enter username for database {}:'.format(database))
+    if password == None:    
+        password = getpass.getpass('Enter database password for user {}:'.format(user))
     try:
         con = psycopg2.connect(database=database, user=user, host=host,
             port=port, password=password)
@@ -64,18 +66,55 @@ def connect_to_db_and_run_query(query, database='postgres', host='localhost', po
 
     cur = con.cursor()
     try:
+        args_str = ','.join(cur.mogrify(col_formats, x[1]) for x in df.iterrows())
+        query = "INSERT INTO "+table+" VALUES " + args_str+";"
         cur.execute(query)
-        # fetchall() returns a list of tuples with the rows resulting from the query
-        # column names must be gotten from the cursor's description
-        df = pd.DataFrame(cur.fetchall(), columns=[col[0] for col in cur.description])
-        print 'Successfully executed query: returning results.'
-        return df
-    except:
-        print 'Query execution failed.'
+        print "Successfully pushed values"
+    except Exception, e:
+        print 'Query execution failed with error: {}'.format(e)
         return None
+    con.commit()
     cur.close()
     con.close()
     print 'Database connection closed.'
+    return
+
+
+def connect_to_db_and_run_query(query, database='postgres', host='localhost', port=5433, user=None, password=None, quiet=False):
+    if user == None:
+        user = getpass.getpass('Enter username for database {}:'.format(database))
+    if password == None:
+        password = getpass.getpass('Enter database password for user {}:'.format(user))
+    try:
+        con = psycopg2.connect(database=database, user=user, host=host,
+            port=port, password=password)
+        if not quiet:
+            print "Connection to database established..."
+    except:
+        sys.exit("Error connecting to database {} at host {}:{}.".format(database,host,port))
+
+    cur = con.cursor()
+    try:
+        cur.execute(query)
+        # fetchall() returns a list of tuples with the rows resulting from the query
+        # column names must be gotten from the cursor's description
+        if cur.description != None:
+            df = pd.DataFrame(cur.fetchall(), columns=[col[0] for col in cur.description])
+            if not quiet:
+                print 'Successfully executed query: returning results.'
+            return df
+        else:
+            if not quiet:
+                print 'Successfully executed query with no results.'
+    except Exception, e:
+        print 'Query execution failed with error: {}'.format(e)
+        return None
+    con.commit()
+    cur.close()
+    con.close()
+    if not quiet:
+        print 'Database connection closed.'
+    return
 
 
 def append_historic_output_to_csv(fpath, df):

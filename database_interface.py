@@ -15,7 +15,8 @@ dataset size for the model.
 
 import os
 import pandas as pd
-from utils import connect_to_db_and_run_query, append_historic_output_to_csv
+import numpy as np
+from utils import connect_to_db_and_run_query, append_historic_output_to_csv, connect_to_db_and_push_df
 from IPython import embed
 from ggplot import *
 
@@ -199,23 +200,6 @@ def filter_projects_by_region_id(region_id, year, host='localhost', area=0.5):
 
 
 def assign_heat_rates_to_projects(generators, year):
-    existing_gens = generators[generators['Operational Status']=='Operable']
-    print "-------------------------------------"
-    print "There are {} existing thermal projects that sum up to {:.1f} GW.".format(
-        len(existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]),
-        existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])][
-            'Nameplate Capacity (MW)'].sum()/1000)
-    heat_rate_data = pd.read_csv(
-        os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t').rename(
-        columns={'Plant Code':'EIA Plant Code'})
-    heat_rate_data = heat_rate_data[heat_rate_data['Year']==year]
-    thermal_gens = pd.merge(
-        existing_gens, heat_rate_data[['EIA Plant Code','Prime Mover','Energy Source','Best Heat Rate']],
-        how='left', suffixes=('',''),
-        on=['EIA Plant Code','Prime Mover','Energy Source']).drop_duplicates()
-
-
-    thermal_gens = thermal_gens[thermal_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
     fuels = {
         'LFG':'Bio_Gas',
         'OBG':'Bio_Gas',
@@ -228,7 +212,7 @@ def assign_heat_rates_to_projects(generators, year):
         'JF':'ResidualFuelOil',
         'COAL':'Coal',
         'GEO':'Geothermal',
-        'NUC':'Nuclear',
+        'NUC':'Uranium',
         'PC':'Coal',
         'SUN':'Solar',
         'WDL':'Bio_Liquid',
@@ -241,8 +225,25 @@ def assign_heat_rates_to_projects(generators, year):
         'MWH':'Electricity',
         'WND':'Wind'
     }
-    thermal_gens = thermal_gens.replace({'Energy Source':fuels})
-    existing_gens = existing_gens.replace({'Energy Source':fuels})
+    generators = generators.replace({'Energy Source':fuels})
+
+    existing_gens = generators[generators['Operational Status']=='Operable']
+    print "-------------------------------------"
+    print "There are {} existing thermal projects that sum up to {:.1f} GW.".format(
+        len(existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]),
+        existing_gens[existing_gens['Prime Mover'].isin(['CC','GT','IC','ST'])][
+            'Nameplate Capacity (MW)'].sum()/1000)
+    heat_rate_data = pd.read_csv(
+        os.path.join('processed_data','historic_heat_rates_WIDE.tab'), sep='\t').rename(
+        columns={'Plant Code':'EIA Plant Code'})
+    heat_rate_data = heat_rate_data[heat_rate_data['Year']==year]
+    heat_rate_data = heat_rate_data.replace({'Energy Source':fuels})
+    thermal_gens = pd.merge(
+        existing_gens, heat_rate_data[['EIA Plant Code','Prime Mover','Energy Source','Best Heat Rate']],
+        how='left', suffixes=('',''),
+        on=['EIA Plant Code','Prime Mover','Energy Source']).drop_duplicates()
+
+    thermal_gens = thermal_gens[thermal_gens['Prime Mover'].isin(['CC','GT','IC','ST'])]
 
     # Replace null and unrealistic heat rates by average values per technology,
     # fuel, and vintage. Also, set HR of top and bottom .5% to max and min
@@ -381,44 +382,233 @@ def finish_project_processing(year):
     with open(os.path.join(outputs_directory, fname),'w') as f:
         uprates.to_csv(f, sep='\t', encoding='utf-8', index=False)
 
-def upload_generation_projects(year, host='localhost'):
-def read_output_csv(fname):
-    try:
-        return pd.read_csv(os.path.join(outputs_directory,fname), sep='\t', index_col=None)
-    except:
-        print "Failed to read file {}. It will be considered to be empty.".format(fname)
-        return None
-existing_gens = read_output_csv('existing_generation_projects_{}.tab'.format(year))
-new_gens = read_output_csv('new_generation_projects_{}.tab'.format(year))
-uprates = read_output_csv('uprates_to_generation_projects_{}.tab'.format(year))
+
+def upload_generation_projects(year):
+    
+    def read_output_csv(fname):
+        try:
+            return pd.read_csv(os.path.join(outputs_directory,fname), sep='\t', index_col=None)
+        except:
+            print "Failed to read file {}. It will be considered to be empty.".format(fname)
+            return None
+
+    existing_gens = read_output_csv('existing_generation_projects_{}.tab'.format(year))
+    new_gens = read_output_csv('new_generation_projects_{}.tab'.format(year))
+    uprates = read_output_csv('uprates_to_generation_projects_{}.tab'.format(year))
+    if uprates is not None:
+        print "Read data for {} existing projects, {} new projects, and {} uprates".format(
+            len(existing_gens), len(new_gens), len(uprates))
+        print "Existing capacity: {:.2f} GW".format(existing_gens['Nameplate Capacity (MW)'].sum()/1000.0)
+        print "Proposed capacity: {:.2f} GW".format(new_gens['Nameplate Capacity (MW)'].sum()/1000.0)
+        print "Capacity uprates: {:.2f} GW".format(uprates['Nameplate Capacity (MW)'].sum()/1000.0)
+    else:
+        print "Read data for {} existing projects and {} new projects".format(
+            len(existing_gens), len(new_gens))
+        print "Existing capacity: {:.2f} GW".format(existing_gens['Nameplate Capacity (MW)'].sum()/1000.0)
+        print "Proposed capacity: {:.2f} GW".format(new_gens['Nameplate Capacity (MW)'].sum()/1000.0)
+
+    generators = pd.concat([existing_gens, new_gens], axis=0)
+
+    ignore_energy_sources = ['Purchased_Steam','Electricity']
+
+    print ("Dropping projects that use Batteries or Purchased Steam, since these"
+    " are not modeled in Switch, totalizing {:.2f} GW of capacity").format(
+        generators[generators['Energy Source'].isin(
+            ignore_energy_sources)]['Nameplate Capacity (MW)'].sum()/1000.0)
+    print "Replacing 'Other' for 'Gas' as energy source for {:.2f} GW of capacity".format(
+        generators[generators['Energy Source'] == 'Other'][
+            'Nameplate Capacity (MW)'].sum()/1000.0)
+    generators.drop(generators[generators['Energy Source'].isin(
+            ignore_energy_sources)].index, inplace=True)
+    generators.replace({'Energy Source':{'Other':'Gas'}}, inplace=True)
 
 
-not_recognized_energy_sources = ['Purchased_Steam','Waste_Heat','Other','Electricity']
-for df in [existing_gens, new_gens, uprates]:
-    # Plants with weird fuels need to be dropped or the Database will raise an error
-    # because of not recognized energy sources
-    print "Dropping projects that use energy sources that are not modeled,"
-    "totalizing {} GW of capacity" 
-    df.drop(df[df['Energy Source'].isin(
-        not_recognized_energy_sources)].index, inplace=True)
-    # Technology is a mixture of 
-    df
-# subir generadores
-# mezclar con load zones y agregar
-# subir agregados, con la ubicación del load zone
-# hacer copia de la tabla y rellenar la copia
-# reemplazar other por ng
-# purchased steam sacarlo
-# waste heat add to energy sources
-# filter out batteries (electriity) for simplicity
-# document all this
-# 
-database_column_renaming_dict = {
-    'Plant Name':'name',
+    def wavg(group, avg_name, weight_name):
+        """
+        http://stackoverflow.com/questions/10951341/pandas-dataframe-aggregate-function-using-multiple-columns
+        """
+        d = group[avg_name]
+        w = group[weight_name]
+        try:
+            return (d * w).sum() / w.sum()
+        except ZeroDivisionError:
+            return d.mean()
 
-}
+    index_cols = ['EIA Plant Code','Prime Mover','Energy Source']
+    print "Calculating capacity-weighted average heat rates per plant, technology and energy source..."
+    generators = pd.merge(generators,
+        pd.DataFrame(generators.groupby(index_cols).apply(wavg,'Best Heat Rate',
+            'Nameplate Capacity (MW)')).reset_index().replace(0,float('nan')),
+        how='right',
+        on=index_cols).drop('Best Heat Rate', axis=1)
 
+    print "Calculating maximum capacity limits per plant, technology and energy source..."
+    gb = generators.groupby(index_cols)
+    agg_generators = gb.agg({col:sum if col == 'Nameplate Capacity (MW)' else 'max'
+                                    for col in generators.columns}).rename(columns=
+                                    {'Nameplate Capacity (MW)':'capacity_limit_mw'})
+    generators = pd.merge(generators, agg_generators[index_cols+['capacity_limit_mw']],
+        on=index_cols, how='right')
+
+    print "Assigning baseload, variable and cogen flags..."
+    generators.loc[:,'is_baseload'] = np.where(generators['Energy Source'].isin(
+        ['Nuclear','Coal','Geothermal']),True,False)
+    generators.loc[:,'is_variable'] = np.where(generators['Prime Mover'].isin(
+        ['HY','PV','WT']),True,False)
+    generators.loc[:,'is_cogen'] = np.where(generators['Cogen'] == 'Y',True,False)
+
+    generators.loc[:,'max_age'] = 40
+
+    # To Do: assign max age, variable o_m, outage rates
+    database_column_renaming_dict = {
+        'EIA Plant Code':'eia_plant_code',
+        'Plant Name':'name',
+        'Prime Mover':'gen_tech',
+        'Energy Source':'energy_source',
+        0:'full_load_heat_rate'
+        }
+
+    generators.rename(columns=database_column_renaming_dict, inplace=True)
+
+    generators.replace(' ',float('nan'), inplace=True)
+
+    print "Pushing projects to the DB..."
+
+    # Drop NOT NULL constraint for load_zone_id col to avoid raising error
+    query = 'ALTER TABLE "generation_plant_copy" ALTER "load_zone_id" DROP NOT NULL;'
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password)
+
+    generators_to_db = generators[['name','gen_tech','capacity_limit_mw',
+        'full_load_heat_rate','max_age','is_variable','is_baseload','is_cogen',
+        'energy_source','eia_plant_code', 'Latitude','Longitude','County',
+        'State']].drop_duplicates()
+
+    connect_to_db_and_push_df(df=generators_to_db,
+        col_formats="(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,%s,NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s)",
+        table='generation_plant_copy',
+        database='switch_wecc', user=user, password=password)
+    print "Successfully pushed data!"
+
+    print "Assigning load zones..."
+    query = "UPDATE generation_plant_copy gc SET load_zone_id = lz.load_zone_id\
+        FROM\
+        (SELECT g.generation_plant_id, g.name, z.name, z.load_zone_id, county, state\
+        FROM generation_plant_copy g join load_zone z ON \
+        ST_contains(boundary, ST_setSRID(ST_makepoint(longitude,latitude),4326))) lz\
+        WHERE lz.generation_plant_id = gc.generation_plant_id"
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+    n_plants_assigned_by_lat_long = connect_to_db_and_run_query("SELECT count(*)\
+        FROM generation_plant_copy WHERE load_zone_id IS NOT NULL",
+        database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
+    print "--Assigned load zone according to lat & long to {} plants".format(
+        n_plants_assigned_by_lat_long)
+
+    query = "UPDATE generation_plant_copy gp1 SET load_zone_id = gp2.load_zone_id\
+        FROM\
+        (SELECT g.generation_plant_id, g.name, c.name, county, state, lz.load_zone_id, lz.name\
+        FROM generation_plant_copy g join us_counties c ON\
+        (g.county = c.name AND g.state = c.state_name)\
+        join load_zone lz ON ST_contains(lz.boundary, ST_centroid(c.the_geom))\
+        WHERE g.load_zone_id IS NULL) gp2\
+        WHERE gp1.generation_plant_id = gp2.generation_plant_id"
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+    n_plants_assigned_by_county_state = connect_to_db_and_run_query("SELECT count(*)\
+        FROM generation_plant_copy WHERE load_zone_id IS NOT NULL",
+        database='switch_wecc', user=user, password=password, quiet=True
+        ).iloc[0,0] - n_plants_assigned_by_lat_long
+    print "--Assigned load zone according to county & state to {} plants".format(
+        n_plants_assigned_by_county_state)
+
+    n_plants_wo_load_zone = connect_to_db_and_run_query("SELECT count(*)\
+        FROM generation_plant_copy WHERE load_zone_id IS NULL",
+        database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
+    if n_plants_wo_load_zone > 0:
+        cap_wo_load_zone = connect_to_db_and_run_query("SELECT sum(capacity_limit_mw)\
+            FROM generation_plant_copy WHERE load_zone_id IS NULL",
+            database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]/1000.0
+        print ("--WARNING: There are {} plants with a total of {} GW of capacity"
+        " w/o an assigned load zone. These will be removed.").format(
+        n_plants_wo_load_zone, cap_wo_load_zone)
+        connect_to_db_and_run_query("DELETE FROM generation_plant_copy\
+            WHERE load_zone_id IS NULL",
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Recover original NOT NULL constraint
+    query = 'ALTER TABLE "generation_plant_copy" ALTER "load_zone_id" SET NOT NULL;'
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
 
 
 if __name__ == "__main__":
     finish_project_processing(2015)
+
+
+
+def assign_states_to_counties():
+    state_dict = {
+        'AL': 'Alabama',
+        'AK': 'Alaska',
+        'AZ': 'Arizona',
+        'AR': 'Arkansas',
+        'CA': 'California',
+        'CO': 'Colorado',
+        'CT': 'Connecticut',
+        'DE': 'Delaware',
+        'FL': 'Florida',
+        'GA': 'Georgia',
+        'HI': 'Hawaii',
+        'ID': 'Idaho',
+        'IL': 'Illinois',
+        'IN': 'Indiana',
+        'IA': 'Iowa',
+        'KS': 'Kansas',
+        'KY': 'Kentucky',
+        'LA': 'Louisiana',
+        'ME': 'Maine',
+        'MD': 'Maryland',
+        'MA': 'Massachusetts',
+        'MI': 'Michigan',
+        'MN': 'Minnesota',
+        'MS': 'Mississippi',
+        'MO': 'Missouri',
+        'MT': 'Montana',
+        'NE': 'Nebraska',
+        'NV': 'Nevada',
+        'NH': 'New Hampshire',
+        'NJ': 'New Jersey',
+        'NM': 'New Mexico',
+        'NY': 'New York',
+        'NC': 'North Carolina',
+        'ND': 'North Dakota',
+        'OH': 'Ohio',
+        'OK': 'Oklahoma',
+        'OR': 'Oregon',
+        'PA': 'Pennsylvania',
+        'RI': 'Rhode Island',
+        'SC': 'South Carolina',
+        'SD': 'South Dakota',
+        'TN': 'Tennessee',
+        'TX': 'Texas',
+        'UT': 'Utah',
+        'VT': 'Vermont',
+        'VA': 'Virginia',
+        'WA': 'Washington',
+        'WV': 'West Virginia',
+        'WI': 'Wisconsin',
+        'WY': 'Wyoming'
+    }
+
+    query = 'UPDATE us_counties uc SET state_name = cs.state\
+        FROM (SELECT DISTINCT c.name, state, statefp, state_fips, c.gid\
+        FROM us_counties c join us_states s ON c.statefp=s.state_fips) cs\
+        WHERE cs.gid = uc.gid'
+    connect_to_db_and_run_query(query, database='switch_wecc', user=user, password=password)
+
+
+    for state_abr, state_name in state_dict.iteritems():
+        query = "UPDATE us_counties SET state_name = '{}' WHERE state_name = '{}'".format(
+            state_abr, state_name)
+        connect_to_db_and_run_query(query, database='switch_wecc', user=user, password=password)
