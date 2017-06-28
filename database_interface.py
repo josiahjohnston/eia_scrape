@@ -384,6 +384,9 @@ def finish_project_processing(year):
 
 
 def upload_generation_projects(year):
+
+    user = getpass.getpass('Enter username for the database:')
+    password = getpass.getpass('Enter database password for user {}:'.format(user))
     
     def read_output_csv(fname):
         try:
@@ -457,89 +460,179 @@ def upload_generation_projects(year):
         ['HY','PV','WT']),True,False)
     generators.loc[:,'is_cogen'] = np.where(generators['Cogen'] == 'Y',True,False)
 
-    generators.loc[:,'max_age'] = 40
-
-    # To Do: assign max age, variable o_m, outage rates
     database_column_renaming_dict = {
         'EIA Plant Code':'eia_plant_code',
         'Plant Name':'name',
         'Prime Mover':'gen_tech',
         'Energy Source':'energy_source',
-        0:'full_load_heat_rate'
+        0:'full_load_heat_rate',
+        'Operating Year':'build_year',
+        'Nameplate Capacity (MW)':'capacity'
         }
 
     generators.rename(columns=database_column_renaming_dict, inplace=True)
 
     generators.replace(' ',float('nan'), inplace=True)
 
-    print "Pushing projects to the DB..."
+    print "-----------------------------"
+    print "Pushing all projects to the DB..."
 
-    # Drop NOT NULL constraint for load_zone_id col to avoid raising error
-    query = 'ALTER TABLE "generation_plant_copy" ALTER "load_zone_id" DROP NOT NULL;'
+    # Drop NOT NULL constraint for load_zone_id & max_age cols to avoid raising error
+    query = 'ALTER TABLE "generation_plant" ALTER "load_zone_id" DROP NOT NULL;'
     connect_to_db_and_run_query(query,
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
+    query = 'ALTER TABLE "generation_plant" ALTER "max_age" DROP NOT NULL;'
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+
+    # First, delete previously stored projects for the EIA scenario id
+    gen_scenario_id = 2.0
+    query = 'DELETE FROM generation_plant_scenario_member\
+        WHERE generation_plant_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    query = 'DELETE FROM generation_plant\
+        WHERE generation_plant_id NOT IN\
+        (SELECT generation_plant_id FROM generation_plant_scenario_member)'
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+    print "Deleted previously stored projects for the EIA dataset (id 2)"
+
+    query = 'SELECT last_value FROM generation_plant_id_seq'
+    first_gen_id = connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0] + 1
 
     generators_to_db = generators[['name','gen_tech','capacity_limit_mw',
-        'full_load_heat_rate','max_age','is_variable','is_baseload','is_cogen',
+        'full_load_heat_rate','is_variable','is_baseload','is_cogen',
         'energy_source','eia_plant_code', 'Latitude','Longitude','County',
         'State']].drop_duplicates()
 
     connect_to_db_and_push_df(df=generators_to_db,
-        col_formats="(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,%s,NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s)",
-        table='generation_plant_copy',
+        col_formats="(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,NULL,NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s)",
+        table='generation_plant',
         database='switch_wecc', user=user, password=password)
     print "Successfully pushed data!"
 
-    print "Assigning load zones..."
-    query = "UPDATE generation_plant_copy gc SET load_zone_id = lz.load_zone_id\
-        FROM\
-        (SELECT g.generation_plant_id, g.name, z.name, z.load_zone_id, county, state\
-        FROM generation_plant_copy g join load_zone z ON \
-        ST_contains(boundary, ST_setSRID(ST_makepoint(longitude,latitude),4326))) lz\
-        WHERE lz.generation_plant_id = gc.generation_plant_id"
+    query = 'SELECT last_value FROM generation_plant_id_seq'
+    last_gen_id = connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
+
+
+    print "\nAssigning load zones..."
+    query = "UPDATE generation_plant SET load_zone_id = z.load_zone_id\
+        FROM load_zone z\
+        WHERE ST_contains(boundary, ST_setSRID(ST_makepoint(longitude,latitude),4326)) AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id)
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
     n_plants_assigned_by_lat_long = connect_to_db_and_run_query("SELECT count(*)\
-        FROM generation_plant_copy WHERE load_zone_id IS NOT NULL",
+        FROM generation_plant WHERE load_zone_id IS NOT NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
     print "--Assigned load zone according to lat & long to {} plants".format(
         n_plants_assigned_by_lat_long)
 
-    query = "UPDATE generation_plant_copy gp1 SET load_zone_id = gp2.load_zone_id\
-        FROM\
-        (SELECT g.generation_plant_id, g.name, c.name, county, state, lz.load_zone_id, lz.name\
-        FROM generation_plant_copy g join us_counties c ON\
-        (g.county = c.name AND g.state = c.state_name)\
-        join load_zone lz ON ST_contains(lz.boundary, ST_centroid(c.the_geom))\
-        WHERE g.load_zone_id IS NULL) gp2\
-        WHERE gp1.generation_plant_id = gp2.generation_plant_id"
+    query = "UPDATE generation_plant g SET load_zone_id = z.load_zone_id\
+        FROM us_counties c\
+        JOIN load_zone z ON ST_contains(z.boundary, ST_centroid(c.the_geom))\
+        WHERE g.load_zone_id IS NULL AND g.state = c.state_name AND g.county = c.name\
+        AND generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id)
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
     n_plants_assigned_by_county_state = connect_to_db_and_run_query("SELECT count(*)\
-        FROM generation_plant_copy WHERE load_zone_id IS NOT NULL",
+        FROM generation_plant WHERE load_zone_id IS NOT NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
         database='switch_wecc', user=user, password=password, quiet=True
         ).iloc[0,0] - n_plants_assigned_by_lat_long
     print "--Assigned load zone according to county & state to {} plants".format(
         n_plants_assigned_by_county_state)
 
     n_plants_wo_load_zone = connect_to_db_and_run_query("SELECT count(*)\
-        FROM generation_plant_copy WHERE load_zone_id IS NULL",
+        FROM generation_plant WHERE load_zone_id IS NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
     if n_plants_wo_load_zone > 0:
         cap_wo_load_zone = connect_to_db_and_run_query("SELECT sum(capacity_limit_mw)\
-            FROM generation_plant_copy WHERE load_zone_id IS NULL",
+            FROM generation_plant WHERE load_zone_id IS NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
             database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]/1000.0
         print ("--WARNING: There are {} plants with a total of {} GW of capacity"
         " w/o an assigned load zone. These will be removed.").format(
         n_plants_wo_load_zone, cap_wo_load_zone)
-        connect_to_db_and_run_query("DELETE FROM generation_plant_copy\
-            WHERE load_zone_id IS NULL",
+        connect_to_db_and_run_query("DELETE FROM generation_plant\
+            WHERE load_zone_id IS NULL AND generation_plant_id BETWEEN {} AND {}".format(
+                first_gen_id, last_gen_id),
             database='switch_wecc', user=user, password=password, quiet=True)
 
+    # Assign default technology values
+    print "Assigning default technology parameter values..."
+    for param in ['max_age','forced_outage_rate','scheduled_outage_rate', 'variable_o_m']:
+        query = "UPDATE generation_plant g SET {} = t.{}\
+                FROM generation_plant_technologies t\
+                WHERE g.energy_source = t.energy_source AND\
+                g.gen_tech = t.gen_tech AND generation_plant_id BETWEEN {} AND\
+                {}".format(param, param, first_gen_id, last_gen_id)
+        connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+        print "--Assigned {}".format(param)
+
+    # Manually assign maximum age for diablo canyon
+    query = "UPDATE generation_plant SET max_age = 40 WHERE name = 'Diablo Canyon'"
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Now, create scenario and assign ids for scenario #2
+    gen_scenario_df = pd.DataFrame()
+    # Get the actual list of ids in the table, since some rows were deleted
+    # because no load zone could be assigned to those projects
+    query = 'SELECT generation_plant_id FROM generation_plant\
+        WHERE generation_plant_id BETWEEN {} AND {}'.format(first_gen_id, last_gen_id)
+    gen_plant_ids = connect_to_db_and_run_query(query,
+                database='switch_wecc', user=user, password=password, quiet=True)
+    gen_plant_ids['generation_plant_scenario_id'] = gen_scenario_id
+
+    connect_to_db_and_push_df(df=gen_plant_ids[['generation_plant_scenario_id','generation_plant_id']],
+        col_formats="(%s,%s)", table='generation_plant_scenario_member',
+        database='switch_wecc', user=user, password=password)
+    print "Successfully assigned pushed generation plants to a scenario!"
+
     # Recover original NOT NULL constraint
-    query = 'ALTER TABLE "generation_plant_copy" ALTER "load_zone_id" SET NOT NULL;'
+    query = 'ALTER TABLE "generation_plant" ALTER "load_zone_id" SET NOT NULL;'
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
+    query = 'ALTER TABLE "generation_plant" ALTER "max_age" SET NOT NULL;'
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+
+
+    print "\nPushing builds years..."
+    query = 'DELETE FROM generation_plant_existing_and_planned\
+        WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Get the list of indexes of plants actually uploaded
+    query = 'SELECT generation_plant_id, eia_plant_code, energy_source, gen_tech FROM generation_plant\
+        JOIN generation_plant_scenario_member USING (generation_plant_id)\
+        WHERE generation_plant_scenario_id = {}'.format(gen_scenario_id)
+    gen_indexes_in_db = connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Create the df and upload it
+    build_years_df = pd.merge(generators, gen_indexes_in_db,
+        on=['eia_plant_code','energy_source','gen_tech'])[['generation_plant_id',
+        'build_year','capacity']]
+    build_years_df['generation_plant_existing_and_planned_scenario_id'] = gen_scenario_id
+    connect_to_db_and_push_df(df=build_years_df[[
+        'generation_plant_existing_and_planned_scenario_id','generation_plant_id',
+        'build_year','capacity']],
+        col_formats="(%s,%s,%s,%s)", table='generation_plant_existing_and_planned',
+        database='switch_wecc', user=user, password=password)
+    print "Successfully uploaded build years!"
+
+    #print "\n-----------------------------"
+    #print "Aggregating projects by load zone..."
 
 
 if __name__ == "__main__":
