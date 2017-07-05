@@ -326,7 +326,8 @@ def parse_eia923_data(directory):
     # WIDE format
     hydro_outputs=pd.concat([
         hydro_generation[['Year','Plant Code','Plant Name','Prime Mover']],
-        hydro_generation.filter(regex=r'(?i)netgen')
+        hydro_generation.filter(regex=r'(?i)netgen'),
+        hydro_generation.filter(regex=r'(?i)elec quantity')
         ], axis=1)
     hydro_outputs=pd.merge(hydro_outputs, hydro_gen_projects[['Plant Code',
         'Prime Mover', 'Nameplate Capacity (MW)', 'County', 'State']],
@@ -335,6 +336,11 @@ def parse_eia923_data(directory):
         hydro_outputs.rename(
             columns={hydro_outputs.columns[3+month]:'Net Electricity Generation (MWh) Month {}'.format(month)},
             inplace=True)
+        hydro_outputs.rename(
+            columns={hydro_outputs.columns[15+month]:'Electricity Consumed (MWh) Month {}'.format(month)},
+            inplace=True)
+        hydro_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)] += \
+            hydro_outputs.loc[:,'Electricity Consumed (MWh) Month {}'.format(month)]
         hydro_outputs.loc[:,'Capacity Factor Month {}'.format(month)] = \
             hydro_outputs.loc[:,'Net Electricity Generation (MWh) Month {}'.format(month)].div(
             monthrange(int(year),month)[1]*24*hydro_outputs['Nameplate Capacity (MW)'])

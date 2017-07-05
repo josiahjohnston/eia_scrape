@@ -16,6 +16,7 @@ dataset size for the model.
 import os
 import pandas as pd
 import numpy as np
+import getpass
 from utils import connect_to_db_and_run_query, append_historic_output_to_csv, connect_to_db_and_push_df
 from IPython import embed
 from ggplot import *
@@ -387,7 +388,7 @@ def upload_generation_projects(year):
 
     user = getpass.getpass('Enter username for the database:')
     password = getpass.getpass('Enter database password for user {}:'.format(user))
-    
+
     def read_output_csv(fname):
         try:
             return pd.read_csv(os.path.join(outputs_directory,fname), sep='\t', index_col=None)
@@ -583,7 +584,6 @@ def upload_generation_projects(year):
             database='switch_wecc', user=user, password=password, quiet=True)
 
     # Now, create scenario and assign ids for scenario #2
-    gen_scenario_df = pd.DataFrame()
     # Get the actual list of ids in the table, since some rows were deleted
     # because no load zone could be assigned to those projects
     query = 'SELECT generation_plant_id FROM generation_plant\
