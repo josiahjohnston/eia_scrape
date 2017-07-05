@@ -631,9 +631,30 @@ def upload_generation_projects(year):
         database='switch_wecc', user=user, password=password)
     print "Successfully uploaded build years!"
 
+    # Read hydro capacity factor data, merge with generators in the database, and upload
+    hydro_cf = read_output_csv('historic_hydro_capacity_factors_NARROW.tab').rename(
+        columns={'Plant Code':'eia_plant_code','Prime Mover':'gen_tech'})
+    hydro_cf = pd.merge(hydro_cf,gen_indexes_in_db[['generation_plant_id','eia_plant_code','gen_tech']],
+        on=['eia_plant_code','gen_tech'], how='inner')
+    hydro_cf.rename(columns={'Month':'month','Year':'year'}, inplace=True)
+    hydro_cf.loc[:,'hydro_avg_flow_mw'] = hydro_cf.loc[:,'Capacity Factor'] * hydro_cf.loc[:,'Nameplate Capacity (MW)']
+    hydro_cf.loc[:,'hydro_min_flow_mw'] = hydro_cf.loc[:,'hydro_avg_flow_mw'] / 2
+    hydro_cf.loc[:,'hydro_simple_scenario_id'] = gen_scenario_id
+    hydro_cf = hydro_cf[['hydro_simple_scenario_id','generation_plant_id',
+        'year','month','hydro_min_flow_mw','hydro_avg_flow_mw']]
+
+    query = 'DELETE FROM hydro_historical_monthly_capacity_factors\
+        WHERE hydro_simple_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    connect_to_db_and_push_df(df=hydro_cf,
+        col_formats="(%s,%s,%s,%s,%s,%s)", table='hydro_historical_monthly_capacity_factors',
+        database='switch_wecc', user=user, password=password)
+    print "Successfully uploaded hydro capacity factors!"
+
     #print "\n-----------------------------"
     #print "Aggregating projects by load zone..."
-
 
 if __name__ == "__main__":
     finish_project_processing(2015)
