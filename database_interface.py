@@ -34,7 +34,7 @@ def pull_generation_projects_data():
             USING (generation_plant_id) \
             WHERE generation_plant_existing_and_planned_scenario_id = 1 "#AND full_load_heat_rate > 0"
     db_gens = connect_to_db_and_run_query(query=query, database='switch_wecc')
-    print "======="
+    print "======="year
     print "Read in {} projects from the database, with {:.0f} GW of capacity".format(
         len(db_gens), db_gens['capacity'].sum()/1000.0)
     thermal_db_gens = db_gens[db_gens['full_load_heat_rate'] > 0]
@@ -475,8 +475,9 @@ def upload_generation_projects(year):
 
     generators.replace(' ',float('nan'), inplace=True)
 
+
     print "-----------------------------"
-    print "Pushing all projects to the DB..."
+    print "Pushing generation plants to the DB:\n"
 
     # Drop NOT NULL constraint for load_zone_id & max_age cols to avoid raising error
     query = 'ALTER TABLE "generation_plant" ALTER "load_zone_id" DROP NOT NULL;'
@@ -488,8 +489,19 @@ def upload_generation_projects(year):
 
     # First, delete previously stored projects for the EIA scenario id
     gen_scenario_id = 2.0
+
+    query = 'DELETE FROM hydro_historical_monthly_capacity_factors\
+        WHERE hydro_simple_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
     query = 'DELETE FROM generation_plant_scenario_member\
         WHERE generation_plant_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    query = 'DELETE FROM generation_plant_existing_and_planned\
+        WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
@@ -498,7 +510,7 @@ def upload_generation_projects(year):
         (SELECT generation_plant_id FROM generation_plant_scenario_member)'
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
-    print "Deleted previously stored projects for the EIA dataset (id 2)"
+    print "Deleted previously stored projects for the EIA dataset (id 2). Pushing data..."
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
     first_gen_id = connect_to_db_and_run_query(query,
@@ -513,12 +525,11 @@ def upload_generation_projects(year):
         col_formats="(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,NULL,NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s)",
         table='generation_plant',
         database='switch_wecc', user=user, password=password)
-    print "Successfully pushed data!"
+    print "Successfully pushed generation plants!"
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
     last_gen_id = connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
-
 
     print "\nAssigning load zones..."
     query = "UPDATE generation_plant SET load_zone_id = z.load_zone_id\
@@ -586,6 +597,7 @@ def upload_generation_projects(year):
     # Now, create scenario and assign ids for scenario #2
     # Get the actual list of ids in the table, since some rows were deleted
     # because no load zone could be assigned to those projects
+    print "\nAssigning all individual plants to scenario id {}...".format(gen_scenario_id)
     query = 'SELECT generation_plant_id FROM generation_plant\
         WHERE generation_plant_id BETWEEN {} AND {}'.format(first_gen_id, last_gen_id)
     gen_plant_ids = connect_to_db_and_run_query(query,
@@ -605,18 +617,13 @@ def upload_generation_projects(year):
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
 
-
-    print "\nPushing builds years..."
-    query = 'DELETE FROM generation_plant_existing_and_planned\
-        WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
-    connect_to_db_and_run_query(query,
-            database='switch_wecc', user=user, password=password, quiet=True)
-
     # Get the list of indexes of plants actually uploaded
-    print "\nGetting list of projects successfully pushed..."
+    print "\nAssigning build years to generation plants..."
     query = 'SELECT * FROM generation_plant\
         JOIN generation_plant_scenario_member USING (generation_plant_id)\
-        WHERE generation_plant_scenario_id = {}'.format(gen_scenario_id)
+        JOIN generation_plant_existing_and_planned USING (generation_plant_id)\
+        WHERE generation_plant_scenario_id = {} AND \
+        generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id,gen_scenario_id)
     gens_in_db = connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
     gen_indexes_in_db = gens_in_db[['generation_plant_id','eia_plant_code','energy_source','gen_tech']]
@@ -625,7 +632,7 @@ def upload_generation_projects(year):
     build_years_df = pd.merge(generators, gen_indexes_in_db,
         on=['eia_plant_code','energy_source','gen_tech'])[['generation_plant_id',
         'build_year','capacity']]
-    build_years_df['generation_plant_existing_and_planned_scenario_id'] = gen_scenario_id
+    build_years_df['generation_p%tblant_existing_and_planned_scenario_id'] = gen_scenario_id
     connect_to_db_and_push_df(df=build_years_df[[
         'generation_plant_existing_and_planned_scenario_id','generation_plant_id',
         'build_year','capacity']],
@@ -634,6 +641,7 @@ def upload_generation_projects(year):
     print "Successfully uploaded build years!"
 
     # Read hydro capacity factor data, merge with generators in the database, and upload
+    print "\nDeleting previously stored hydro capacity factors and uploading new ones..."
     hydro_cf = read_output_csv('historic_hydro_capacity_factors_NARROW.tab').rename(
         columns={'Plant Code':'eia_plant_code','Prime Mover':'gen_tech'})
     hydro_cf = pd.merge(hydro_cf,gen_indexes_in_db[['generation_plant_id','eia_plant_code','gen_tech']],
@@ -656,17 +664,25 @@ def upload_generation_projects(year):
     print "Successfully uploaded hydro capacity factors!"
 
 
-    print "\nAggregating projects by load zone..."
+
+    print "\n-----------------------------"
+    print "Aggregating projects by load zone..."
 
     # First, group by load zone, gen tech, energy source and heat rate
     # (while calculating a capacity-weighted average heat rate)
     gens_in_db['hr_group'] = gens_in_db['full_load_heat_rate'].fillna(0).round()
     gens_in_db['full_load_heat_rate'] *= gens_in_db['capacity_limit_mw']
     gens_in_db_cols = gens_in_db.columns
-    gb = gens_in_db.groupby(['gen_tech','load_zone_id','energy_source','hr_group'])
+    gb = gens_in_db.groupby(['gen_tech','load_zone_id','energy_source',
+        'hr_group'])
+    build_years = gb['build_year'].apply(list)
+    capacities = gb['capacity'].apply(list)
     gens_in_db = gb.agg(
                 {col:(sum if col in ['capacity_limit_mw','full_load_heat_rate']
-                    else 'max') for col in gens_in_db.columns}).reset_index(drop=True)
+                    else 'max') for col in gens_in_db.columns})
+    gens_in_db['capacity'] = capacities
+    gens_in_db['build_year'] = build_years
+    gens_in_db.reset_index(drop=True)
     gens_in_db['full_load_heat_rate'] /= gens_in_db['capacity_limit_mw']
     aggregated_gens = gens_in_db[gens_in_db_cols]
 
@@ -675,13 +691,21 @@ def upload_generation_projects(year):
         aggregated_gens['gen_tech'] + '_' + aggregated_gens['energy_source'] + '_HR_' +
         aggregated_gens['hr_group'].map(int).map(str))
     aggregated_gens.drop(['generation_plant_id','generation_plant_scenario_id',
-        'hr_group','eia_plant_code','latitude','longitude','county','state'],
+        'hr_group','eia_plant_code','latitude','longitude','county','state',
+        'generation_plant_existing_and_planned_scenario_id'],
         axis=1, inplace=True)
 
     # First, delete previously stored projects for the aggregated plants
     gen_scenario_id = 3.0
+
+
     query = 'DELETE FROM generation_plant_scenario_member\
         WHERE generation_plant_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    query = 'DELETE FROM generation_plant_existing_and_planned\
+        WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
@@ -690,13 +714,13 @@ def upload_generation_projects(year):
         (SELECT generation_plant_id FROM generation_plant_scenario_member)'
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
-    print "Deleted previously stored projects for the aggregated EIA dataset (id 3)"
+    print "Deleted previously stored projects for the load zone-aggregated EIA dataset (id 3). Pushing data..."
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
     first_gen_id = connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0] + 1
 
-    connect_to_db_and_push_df(df=aggregated_gens,
+    connect_to_db_and_push_df(df=aggregated_gens.drop(['capacity','build_year'], axis=1),
         col_formats="(DEFAULT,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL)",
         table='generation_plant',
         database='switch_wecc', user=user, password=password)
@@ -706,15 +730,24 @@ def upload_generation_projects(year):
     last_gen_id = connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
 
+    print "\nAssigning all aggregated plants to scenario id {}...".format(gen_scenario_id)
     query = 'INSERT INTO generation_plant_scenario_member\
     (SELECT {}, generation_plant_id FROM generation_plant\
         WHERE generation_plant_id BETWEEN {} AND {})'.format(
             gen_scenario_id,first_gen_id, last_gen_id)
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
-    print "Successfully assigned pushed generation plants to scenario 3!"
+    print "Successfully assigned pushed generation plants to a scenario!"
 
+    # This will be slow, but it's the only way I have come up with so far
+    string = ''
+    for row in aggregated_gens.iterrows():
+        row = row[1]
+        for i in range(len(row['capacity'])):
+            string += ' (3,'+str(row['generation_plant_id'])+','+str(row['capacity'][i])+','+str(row['build_year'][i])+'),'
+    string = string[:-1]
 
+    # Now, insert
 
 if __name__ == "__main__":
     finish_project_processing(2015)
