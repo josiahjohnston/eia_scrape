@@ -500,6 +500,11 @@ def upload_generation_projects(year):
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
+    query = 'DELETE FROM generation_plant_cost\
+        WHERE generation_plant_cost_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
     query = 'DELETE FROM generation_plant_existing_and_planned\
         WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
     connect_to_db_and_run_query(query,
@@ -637,12 +642,25 @@ def upload_generation_projects(year):
         on=['eia_plant_code','energy_source','gen_tech'])[['generation_plant_id',
         'build_year','capacity']]
     build_years_df['generation_plant_existing_and_planned_scenario_id'] = gen_scenario_id
-    connect_to_db_and_push_df(df=build_years_df[[
+    build_years_df = build_years_df[[
         'generation_plant_existing_and_planned_scenario_id','generation_plant_id',
-        'build_year','capacity']],
+        'build_year','capacity']]
+    connect_to_db_and_push_df(df=build_years_df,
         col_formats="(%s,%s,%s,%s)", table='generation_plant_existing_and_planned',
         database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully uploaded build years!"
+
+    print "\nAssigning fixed and investment costs to generation plants..."
+    cost_df = build_years_df.rename(columns={
+        'generation_plant_existing_and_planned_scenario_id':
+        'generation_plant_cost_scenario_id'}).drop('capacity', axis=1)
+    cost_df['fixed_o_m'] = 0
+    cost_df['overnight_cost'] = 0
+
+    connect_to_db_and_push_df(df=cost_df,
+        col_formats="(%s,%s,%s,%s,%s)", table='generation_plant_cost',
+        database='switch_wecc', user=user, password=password, quiet=True)
+    print "Successfully uploaded fixed and capital costs!"
 
     # Read hydro capacity factor data, merge with generators in the database, and upload
     print "\nUploading hydro capacity factors..."
@@ -699,6 +717,11 @@ def upload_generation_projects(year):
 
     query = 'DELETE FROM generation_plant_existing_and_planned\
         WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    query = 'DELETE FROM generation_plant_cost\
+        WHERE generation_plant_cost_scenario_id = {}'.format(gen_scenario_id)
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
@@ -771,6 +794,18 @@ def upload_generation_projects(year):
         table='generation_plant_existing_and_planned',
         database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully pushed aggregated project build years data!"
+
+    print "\nAssigning fixed and investment costs to generation plants..."
+    aggregated_gens_costs = aggregated_gens_bld_yrs.rename(columns={
+        'generation_plant_existing_and_planned_scenario_id':
+        'generation_plant_cost_scenario_id'}).drop('capacity', axis=1)
+    aggregated_gens_costs['fixed_o_m'] = 0
+    aggregated_gens_costs['overnight_cost'] = 0
+
+    connect_to_db_and_push_df(df=aggregated_gens_costs,
+        col_formats="(%s,%s,%s,%s,%s)", table='generation_plant_cost',
+        database='switch_wecc', user=user, password=password, quiet=True)
+    print "Successfully uploaded fixed and capital costs!"
 
     print "\nUploading hydro capacity factors..."
     agg_hydro_cf = read_output_csv('historic_hydro_capacity_factors_NARROW.tab').rename(
