@@ -52,7 +52,7 @@ def unzip(file_list):
             print "Skipping "+unzip_name+" because it was already unzipped."
 
 
-def connect_to_db_and_push_df(df, col_formats, table, database='postgres', host='localhost', port=5433, user=None, password=None):
+def connect_to_db_and_push_df(df, col_formats, table, database='postgres', host='localhost', port=5433, user=None, password=None, quiet=False):
     if user == None:
         user = getpass.getpass('Enter username for database {}:'.format(database))
     if password == None:    
@@ -60,7 +60,8 @@ def connect_to_db_and_push_df(df, col_formats, table, database='postgres', host=
     try:
         con = psycopg2.connect(database=database, user=user, host=host,
             port=port, password=password)
-        print "Connection to database established..."
+        if not quiet:
+            print "Connection to database established..."
     except:
         sys.exit("Error connecting to database {} at host {}:{}.".format(database,host,port))
 
@@ -69,14 +70,16 @@ def connect_to_db_and_push_df(df, col_formats, table, database='postgres', host=
         args_str = ','.join(cur.mogrify(col_formats, x[1]) for x in df.iterrows())
         query = "INSERT INTO "+table+" VALUES " + args_str+";"
         cur.execute(query)
-        print "Successfully pushed values"
+        if not quiet:
+            print "Successfully pushed values"
     except Exception, e:
         print 'Query execution failed with error: {}'.format(e)
         return None
     con.commit()
     cur.close()
     con.close()
-    print 'Database connection closed.'
+    if not quiet:
+        print 'Database connection closed.'
     return
 
 

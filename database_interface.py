@@ -524,14 +524,21 @@ def upload_generation_projects(year):
         'State']].drop_duplicates()
 
     connect_to_db_and_push_df(df=generators_to_db,
-        col_formats="(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,NULL,NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s)",
+        col_formats=("(DEFAULT,%s,%s,NULL,NULL,%s,NULL,NULL,NULL,%s,NULL,NULL,"
+            "NULL,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,%s,%s,%s,%s,%s,NULL)"),
         table='generation_plant',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully pushed generation plants!"
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
     last_gen_id = connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
+
+    # Populate geometry column for GIS work
+    query = "UPDATE generation_plant\
+        SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)\
+        WHERE longitude IS NOT NULL AND latitude IS NOT NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id)
 
     print "\nAssigning load zones..."
     query = "UPDATE generation_plant SET load_zone_id = z.load_zone_id\
@@ -562,21 +569,18 @@ def upload_generation_projects(year):
     print "--Assigned load zone according to county & state to {} plants".format(
         n_plants_assigned_by_county_state)
 
-    n_plants_wo_load_zone = connect_to_db_and_run_query("SELECT count(*)\
-        FROM generation_plant WHERE load_zone_id IS NULL AND\
-        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
-        database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]
-    if n_plants_wo_load_zone > 0:
-        cap_wo_load_zone = connect_to_db_and_run_query("SELECT sum(capacity_limit_mw)\
-            FROM generation_plant WHERE load_zone_id IS NULL AND\
-        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
-            database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0]/1000.0
+    plants_wo_load_zone_count_and_cap = connect_to_db_and_run_query("SELECT count(*),\
+        sum(capacity_limit_mw) FROM generation_plant WHERE load_zone_id IS NULL\
+        AND generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
+        database='switch_wecc', user=user, password=password, quiet=True)
+    if plants_wo_load_zone_count_and_cap.iloc[0,0] > 0:
         print ("--WARNING: There are {} plants with a total of {} GW of capacity"
         " w/o an assigned load zone. These will be removed.").format(
-        n_plants_wo_load_zone, cap_wo_load_zone)
+        plants_wo_load_zone_count_and_cap.iloc[0,0],
+        plants_wo_load_zone_count_and_cap.iloc[0,1]/1000.0)
         connect_to_db_and_run_query("DELETE FROM generation_plant\
-            WHERE load_zone_id IS NULL AND generation_plant_id BETWEEN {} AND {}".format(
-                first_gen_id, last_gen_id),
+            WHERE load_zone_id IS NULL AND generation_plant_id BETWEEN {}\
+            AND {}".format(first_gen_id, last_gen_id),
             database='switch_wecc', user=user, password=password, quiet=True)
 
     # Assign default technology values
@@ -608,7 +612,7 @@ def upload_generation_projects(year):
 
     connect_to_db_and_push_df(df=gen_plant_ids[['generation_plant_scenario_id','generation_plant_id']],
         col_formats="(%s,%s)", table='generation_plant_scenario_member',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully assigned pushed generation plants to a scenario!"
 
     # Recover original NOT NULL constraint
@@ -637,7 +641,7 @@ def upload_generation_projects(year):
         'generation_plant_existing_and_planned_scenario_id','generation_plant_id',
         'build_year','capacity']],
         col_formats="(%s,%s,%s,%s)", table='generation_plant_existing_and_planned',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully uploaded build years!"
 
     # Read hydro capacity factor data, merge with generators in the database, and upload
@@ -655,7 +659,7 @@ def upload_generation_projects(year):
 
     connect_to_db_and_push_df(df=hydro_cf,
         col_formats="(%s,%s,%s,%s,%s,%s)", table='hydro_historical_monthly_capacity_factors',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully uploaded hydro capacity factors!"
 
 
@@ -714,10 +718,11 @@ def upload_generation_projects(year):
     first_gen_id = connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True).iloc[0,0] + 1
 
-    connect_to_db_and_push_df(df=aggregated_gens.drop(['hr_group'], axis=1),
-        col_formats="(DEFAULT,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL)",
+    connect_to_db_and_push_df(df=aggregated_gens.drop(['hr_group','geom'], axis=1),
+        col_formats=("(DEFAULT,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
+            "%s,%s,%s,%s,%s,%s,%s,%s,%s,NULL,NULL,NULL,NULL,NULL,NULL)"),
         table='generation_plant',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully pushed aggregated project data!"
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
@@ -748,22 +753,23 @@ def upload_generation_projects(year):
     aggregated_gens_in_db['generation_plant_existing_and_planned_scenario_id'] = gen_scenario_id
     gens_in_db = pd.merge(gens_in_db, generators[['eia_plant_code','energy_source',
         'gen_tech','capacity','build_year']],
-        on=['eia_plant_code','energy_source','gen_tech'])
+        on=['eia_plant_code','energy_source','gen_tech'], suffixes=('','_y'))
     aggregated_gens_bld_yrs = pd.merge(aggregated_gens_in_db, gens_in_db,
         on=['load_zone_id','energy_source','gen_tech','hr_group'], suffixes=('','_y'))[[
         'generation_plant_existing_and_planned_scenario_id',
         'generation_plant_id','build_year','capacity']]
-    aggregated_gens_bld_yrs_cols = aggregated_gens_bld_yrs.columns
+    aggregated_gens_bld_yrs_cols = list(aggregated_gens_bld_yrs.columns)
 
-    gb = aggregated_gens_bld_yrs.groupby(list(aggregated_gens_bld_yrs_cols))
+    gb = aggregated_gens_bld_yrs.groupby(aggregated_gens_bld_yrs_cols[:-1])
     aggregated_gens_bld_yrs = gb.agg(
-        {col:(sum if col=='capacity' else 'max') for col in aggregated_gens_bld_yrs_cols}).reset_index(drop=True)
+        {col:(sum if col=='capacity' else 'max')
+        for col in aggregated_gens_bld_yrs.columns}).reset_index(drop=True)
     aggregated_gens_bld_yrs = aggregated_gens_bld_yrs[aggregated_gens_bld_yrs_cols]
 
     connect_to_db_and_push_df(df=aggregated_gens_bld_yrs,
         col_formats="(%s,%s,%s,%s)",
         table='generation_plant_existing_and_planned',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully pushed aggregated project build years data!"
 
     print "\nUploading hydro capacity factors..."
@@ -790,7 +796,7 @@ def upload_generation_projects(year):
 
     connect_to_db_and_push_df(df=agg_hydro_cf,
         col_formats="(%s,%s,%s,%s,%s,%s)", table='hydro_historical_monthly_capacity_factors',
-        database='switch_wecc', user=user, password=password)
+        database='switch_wecc', user=user, password=password, quiet=True)
     print "Successfully uploaded hydro capacity factors!"
 
 
