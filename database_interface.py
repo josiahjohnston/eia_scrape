@@ -13,7 +13,7 @@ dataset size for the model.
 
 """
 
-import os
+import os, sys
 import pandas as pd
 import numpy as np
 import getpass
@@ -475,9 +475,22 @@ def upload_generation_projects(year):
 
     generators.replace(' ',float('nan'), inplace=True)
 
+    carry_on = getpass.getpass('WARNING: In order to push projects into the DB,'
+        'all projects currently in the generation_plant table that are'
+        'not present in the generation_plant_scenario_member table will be'
+        'removed. Continue? [y/n]')
+    if carry_on not in ['y','n']:
+        carry_on = getpass.getpass('WARNING: In order to push projects into the DB,'
+        'all projects currently in the generation_plant table that are'
+        'not present in the generation_plant_scenario_member table will be'
+        'removed. Continue? [y/n]')
+    elif carry_on == 'n':
+        sys.exit()
 
-    print "-----------------------------"
+    print "\n-----------------------------"
     print "Pushing generation plants to the DB:\n"
+
+    # Make sure the "switch" schema is on the search path
 
     # Drop NOT NULL constraint for load_zone_id & max_age cols to avoid raising error
     query = 'ALTER TABLE "generation_plant" ALTER "load_zone_id" DROP NOT NULL;'
@@ -509,14 +522,17 @@ def upload_generation_projects(year):
         WHERE generation_plant_existing_and_planned_scenario_id = {}'.format(gen_scenario_id)
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
-    ##################
-    # Consult with josiah on best way to delete previous projects
-    ##################
-    #query = 'DELETE FROM generation_plant\
-    #    WHERE generation_plant_id NOT IN\
-    #    (SELECT generation_plant_id FROM generation_plant_scenario_member)'
-    #connect_to_db_and_run_query(query,
-    #    database='switch_wecc', user=user, password=password, quiet=True)
+
+    # It is necessary to temporarily disable triggers when deleting from
+    # generation_plant table, because of multiple fkey constraints
+    query = 'SET session_replication_role = replica;\
+            DELETE FROM generation_plant\
+            WHERE generation_plant_id NOT IN\
+            (SELECT generation_plant_id FROM generation_plant_scenario_member);\
+            SET session_replication_role = DEFAULT;'
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
     print "Deleted previously stored projects for the EIA dataset (id 2). Pushing data..."
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
@@ -544,11 +560,13 @@ def upload_generation_projects(year):
         SET geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)\
         WHERE longitude IS NOT NULL AND latitude IS NOT NULL AND\
         generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id)
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
 
     print "\nAssigning load zones..."
     query = "UPDATE generation_plant SET load_zone_id = z.load_zone_id\
         FROM load_zone z\
-        WHERE ST_contains(boundary, ST_setSRID(ST_makepoint(longitude,latitude),4326)) AND\
+        WHERE ST_contains(boundary, geom) AND\
         generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id)
     connect_to_db_and_run_query(query,
         database='switch_wecc', user=user, password=password, quiet=True)
@@ -574,12 +592,36 @@ def upload_generation_projects(year):
     print "--Assigned load zone according to county & state to {} plants".format(
         n_plants_assigned_by_county_state)
 
+    # Plants that are located outside of the WECC region boundary get assigned
+    # to the nearest load zone, ONLY if they are located less than 100 miles
+    # out of the boundary
+    query = "UPDATE generation_plant AS g1 SET load_zone_id = lz1.load_zone_id\
+        FROM load_zone lz1\
+        WHERE g1.load_zone_id is NULL AND g1.geom IS NOT NULL\
+        AND g1.generation_plant_id between {} AND {}\
+        AND ST_Distance(g1.geom::geography,lz1.boundary::geography)/1609 < 100\
+        AND ST_Distance(g1.geom::geography,lz1.boundary::geography)/1609 = \
+        (SELECT min(ST_Distance(g2.geom::geography,lz2.boundary::geography)/1609)\
+        FROM generation_plant g2\
+        CROSS JOIN load_zone lz2\
+        WHERE g2.load_zone_id is NULL AND g2.geom IS NOT NULL\
+        AND g2.generation_plant_id = g1.generation_plant_id)".format(first_gen_id, last_gen_id)
+    connect_to_db_and_run_query(query,
+        database='switch_wecc', user=user, password=password, quiet=True)
+    n_plants_assigned_to_nearest_lz = connect_to_db_and_run_query("SELECT count(*)\
+        FROM generation_plant WHERE load_zone_id IS NOT NULL AND\
+        generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
+        database='switch_wecc', user=user, password=password, quiet=True
+        ).iloc[0,0] - n_plants_assigned_by_lat_long - n_plants_assigned_by_county_state
+    print "--Assigned load zone according to nearest load zone to {} plants".format(
+        n_plants_assigned_to_nearest_lz)
+
     plants_wo_load_zone_count_and_cap = connect_to_db_and_run_query("SELECT count(*),\
         sum(capacity_limit_mw) FROM generation_plant WHERE load_zone_id IS NULL\
         AND generation_plant_id BETWEEN {} AND {}".format(first_gen_id, last_gen_id),
         database='switch_wecc', user=user, password=password, quiet=True)
     if plants_wo_load_zone_count_and_cap.iloc[0,0] > 0:
-        print ("--WARNING: There are {} plants with a total of {} GW of capacity"
+        print ("--WARNING: There are {:.0f} plants with a total of {:.2f} GW of capacity"
         " w/o an assigned load zone. These will be removed.").format(
         plants_wo_load_zone_count_and_cap.iloc[0,0],
         plants_wo_load_zone_count_and_cap.iloc[0,1]/1000.0)
@@ -730,11 +772,15 @@ def upload_generation_projects(year):
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
-    #query = 'DELETE FROM generation_plant\
-    #    WHERE generation_plant_id NOT IN\
-    #    (SELECT generation_plant_id FROM generation_plant_scenario_member)'
-    #connect_to_db_and_run_query(query,
-    #    database='switch_wecc', user=user, password=password, quiet=True)
+    # It is necessary to temporarily disable triggers when deleting from
+    # generation_plant table, because of multiple fkey constraints
+    query = 'SET session_replication_role = replica;\
+            DELETE FROM generation_plant\
+            WHERE generation_plant_id NOT IN\
+            (SELECT generation_plant_id FROM generation_plant_scenario_member);\
+            SET session_replication_role = DEFAULT;'
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
     print "\nDeleted previously stored projects for the load zone-aggregated EIA dataset (id 3). Pushing data..."
 
     query = 'SELECT last_value FROM generation_plant_id_seq'
