@@ -881,6 +881,33 @@ def upload_generation_projects(year):
     print "Successfully uploaded hydro capacity factors!"
 
 
+def assign_var_cap_factors():
+    user = getpass.getpass('Enter username for the database:')
+    password = getpass.getpass('Enter database password for user {}:'.format(user))
+    print "\nWill assign variable capacity factors for WIND projects"
+    print "(May take significant time)\n"
+    # Assign average AMPL wind profile of each load zone to all projects in that zone
+    for zone in range(16,51):
+        print "Load zone {}...".format(zone)
+        query = "INSERT INTO variable_capacity_factors\
+                (SELECT generation_plant_id, timepoint_id, timestamp_utc, cap_factor, 1\
+                FROM generation_plant\
+                JOIN(\
+                SELECT area_id, timepoint_id, timestamp_utc, avg(cap_factor) AS cap_factor, 1\
+                FROM temp_ampl__proposed_projects_v3\
+                JOIN temp_variable_capacity_factors_historical USING (project_id)\
+                JOIN temp_load_scenario_historic_timepoints ON (hour=historic_hour)\
+                JOIN raw_timepoint ON (timepoint_id = raw_timepoint_id)\
+                WHERE area_id = {} AND technology_id = 4\
+                GROUP BY 1,2,3\
+                ORDER BY 1,2\
+                ) AS factores ON (area_id = load_zone_id)\
+                WHERE gen_tech = 'WT')".format(zone)
+        connect_to_db_and_run_query(query,
+                database='switch_wecc', user=user, password=password, quiet=True)
+        print "Successfully assigned factors to projects in load zone {}.".format(zone)
+
+
 if __name__ == "__main__":
     finish_project_processing(2015)
 
