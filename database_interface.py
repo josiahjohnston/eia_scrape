@@ -887,7 +887,7 @@ def assign_var_cap_factors():
     print "\nWill assign variable capacity factors for WIND projects"
     print "(May take significant time)\n"
     # Assign average AMPL wind profile of each load zone to all projects in that zone
-    for zone in range(16,51):
+    for zone in range(1,51):
         print "Load zone {}...".format(zone)
         query = "INSERT INTO variable_capacity_factors\
                 (SELECT generation_plant_id, timepoint_id, timestamp_utc, cap_factor, 1\
@@ -901,11 +901,60 @@ def assign_var_cap_factors():
                 WHERE area_id = {} AND technology_id = 4\
                 GROUP BY 1,2,3\
                 ORDER BY 1,2\
-                ) AS factores ON (area_id = load_zone_id)\
+                ) AS factors ON (area_id = load_zone_id)\
                 WHERE gen_tech = 'WT')".format(zone)
         connect_to_db_and_run_query(query,
                 database='switch_wecc', user=user, password=password, quiet=True)
         print "Successfully assigned factors to projects in load zone {}.".format(zone)
+
+    print "\nWill assign variable capacity factors for SOLAR PV projects"
+    print "(May take significant time)\n"
+    for zone in range(1,51):
+        print "Load zone {}...".format(zone)
+        query = "INSERT INTO variable_capacity_factors\
+                (SELECT generation_plant_id, timepoint_id, timestamp_utc, cap_factor, 1\
+                FROM generation_plant\
+                JOIN(\
+                SELECT area_id, timepoint_id, timestamp_utc, avg(cap_factor) AS cap_factor, 1\
+                FROM temp_ampl__proposed_projects_v3\
+                JOIN temp_variable_capacity_factors_historical USING (project_id)\
+                JOIN temp_load_scenario_historic_timepoints ON (hour=historic_hour)\
+                JOIN raw_timepoint ON (timepoint_id = raw_timepoint_id)\
+                WHERE area_id = {} AND technology_id IN (6,25,26)\
+                GROUP BY 1,2,3\
+                ORDER BY 1,2\
+                ) AS factors ON (area_id = load_zone_id)\
+                WHERE gen_tech = 'PV')".format(zone)
+        connect_to_db_and_run_query(query,
+                database='switch_wecc', user=user, password=password, quiet=True)
+        print "Successfully assigned factors to projects in load zone {}.".format(zone)
+
+    print "\nSetting all capacity factors for January 1st 00:00-8:00 hrs to 0.0"
+    for zone in range(1,51):
+        query = "delete from variable_capacity_factors cf\
+        using generation_plant gp\
+        where gp.generation_plant_id = cf.generation_plant_id and\
+        gen_tech = 'PV' and load_zone_id={} and\
+        extract(day from timestamp_utc) = 1\
+        and extract(month from timestamp_utc) = 1\
+        and extract(hour from timestamp_utc) between 0 and 8".format(zone)
+        connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+        print "Deleted existing cap factors for zone {} in that interval.".format(zone)
+
+        query = "INSERT into variable_capacity_factors\
+        (select generation_plant_id, timepoint_id, timestamp_utc, 0.0, 1\
+        from temp_load_scenario_historic_timepoints\
+        join raw_timepoint on (raw_timepoint_id=timepoint_id)\
+        cross join generation_plant\
+        where gen_tech = 'PV'\
+        and load_zone_id = {}\
+        and extract(day from timestamp_utc) = 1\
+        and extract(month from timestamp_utc) = 1\
+        and extract(hour from timestamp_utc) between 0 and 8)".format(zone)
+        connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+        print "Inserted values of 0.0."
 
 
 if __name__ == "__main__":
