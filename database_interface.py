@@ -957,8 +957,67 @@ def assign_var_cap_factors():
         print "Inserted values of 0.0."
 
 
+def others():
+    # Fuel cells ('FC') were not calculated and assigned heat rates
+    # These sum up to 63 MW of capacity in WECC
+    # Cleanest option is to remove them from the current runs:
+    query = "CREATE TABLE switch.fuel_cell_generation_plant_backup (like generation_plant);\
+        INSERT INTO fuel_cell_generation_plants\
+        (SELECT * FROM generation_plant WHERE gen_tech = 'FC');\
+        DELETE FROM generation_plant_scenario_member gpsm USING generation_plant gp\
+        WHERE gp.generation_plant_id = gpsm.generation_plant_id\
+        AND gen_tech = 'FC';\
+        DELETE FROM generation_plant_cost gpc USING generation_plant gp\
+        WHERE gp.generation_plant_id = gpc.generation_plant_id\
+        AND gen_tech = 'FC';\
+        DELETE FROM generation_plant_existing_and_planned gpep USING generation_plant gp\
+        WHERE gp.generation_plant_id = gpep.generation_plant_id\
+        AND gen_tech = 'FC';\
+        DELETE FROM generation_plant WHERE gen_tech = 'FC';"
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Others ('OT') also do not have an assigned heat rate. Assign an average.
+    query = "UPDATE generation_plant set full_load_heat_rate = \
+        (select avg(full_load_heat_rate)\
+        from generation_plant\
+        join generation_plant_scenario_member using (generation_plant_id)\
+        where energy_source = 'Gas'\
+        and generation_plant_scenario_id = 2)\
+        where gen_tech = 'OT' and energy_source = 'Gas'"
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # A handful of hydro capacity factors were inputted as 'NaN's
+    query = "UPDATE hydro_historical_monthly_capacity_factors\
+        set hydro_min_flow_mw = 0.01\
+        where hydro_simple_scenario_id = 2\
+        and hydro_min_flow_mw = 'NaN';\
+        UPDATE hydro_historical_monthly_capacity_factors\
+        set hydro_avg_flow_mw = 0.01\
+        where hydro_simple_scenario_id = 2\
+        and hydro_avg_flow_mw = 'NaN';"
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
+    # Replace 'NaN's with 'Null's for the aggregated projects
+    # (NaNs result from the aggregation process)
+    cols_to_replace_nans = ['connect_cost_per_mw','hydro_efficiency','min_build_capacity',
+                            'unit_size','storage_efficiency','store_to_release_ratio',
+                            'min_load_fraction','startup_fuel','startup_om',
+                            'ccs_capture_efficiency', 'ccs_energy_load']
+    for col in cols_to_replace_nans:
+        query = "UPDATE generation_plant SET {c} = Null WHERE {c} = 'NaN'".format(c=col)
+        connect_to_db_and_run_query(query,
+                database='switch_wecc', user=user, password=password, quiet=True)
+        print "Replaced NaNs in column '{}'".format(col)
+
+
 if __name__ == "__main__":
     finish_project_processing(2015)
+    # upload_generation_projects(2015)
+    # assign_var_cap_factors()
+    # others()
 
 
 
