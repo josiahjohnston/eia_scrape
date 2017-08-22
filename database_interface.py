@@ -1000,7 +1000,7 @@ def others():
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
-    # Replace 'NaN's with 'Null's for the aggregated projects
+    # Replace 'NaN's with 'Null's
     # (NaNs result from the aggregation process)
     cols_to_replace_nans = ['connect_cost_per_mw','hydro_efficiency','min_build_capacity',
                             'unit_size','storage_efficiency','store_to_release_ratio',
@@ -1011,6 +1011,13 @@ def others():
         connect_to_db_and_run_query(query,
                 database='switch_wecc', user=user, password=password, quiet=True)
         print "Replaced NaNs in column '{}'".format(col)
+
+    # Replace Nulls with zeros where Switch expects a number
+    query = "UPDATE generation_plant\
+            SET connect_cost_per_mw = 0.0\
+            WHERE connect_cost_per_mw is Null"
+    connect_to_db_and_run_query(query,
+                database='switch_wecc', user=user, password=password, quiet=True)
 
 
 if __name__ == "__main__":
