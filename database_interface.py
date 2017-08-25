@@ -956,6 +956,18 @@ def assign_var_cap_factors():
             database='switch_wecc', user=user, password=password, quiet=True)
         print "Inserted values of 0.0."
 
+    # Replace the dummy values of 0.0 by moving all capacity factors 7 hours ahead
+    # This is necessary due to a mismatch with the old AMPL factors
+    print "Moving PV capacity factors 7 hours ahead. Could take a long while..."
+    query = "UPDATE variable_capacity_factors cf\
+            set capacity_factor = cf2.capacity_factor\
+            from variable_capacity_factors cf2 join generation_plant using (generation_plant_id)\
+            where gen_tech = 'PV' and\
+            cf.generation_plant_id = cf2.generation_plant_id and\
+            cf.raw_timepoint_id + 7 = cf2.raw_timepoint_id;"
+    connect_to_db_and_run_query(query,
+            database='switch_wecc', user=user, password=password, quiet=True)
+
 
 def others():
     # Fuel cells ('FC') were not calculated and assigned heat rates
