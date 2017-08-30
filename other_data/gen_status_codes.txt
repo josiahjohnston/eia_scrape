@@ -1,8 +1,6 @@
 "Generator Status Code"	"Generator Status Code Description"
 IP	"Planned new generator canceled, indefinitely postponed, or no
 longer in resource plan"
-TS	"Construction complete, but not yet in commercial operation
-(including low power testing of nuclear units)"
 P	"Planned for installation but regulatory approvals not initiated;
 Not under construction"
 L	"Regulatory approvals pending. Not under construction but site

@@ -1,15 +1,8 @@
 # Copyright 2017. All rights reserved. See AUTHORS.txt
 # Licensed under the Apache License, Version 2.0 which is in LICENSE.txt
 """
-Provides several functions to work with the SWITCH database.
-
-Many are ad-hoc functions for interactive exploration of the data.
-
-To Do:
-Push the cleaned and validated data into postgresql.
-Assign plants to load zones in postgresql.
-Aggregate similar plants within each load zone in postgresql to reduce the
-dataset size for the model.
+Defines several functions to finish processing EIA data and upload to the
+Switch-WECC database. Some functions may be used for other purposes.
 
 """
 
@@ -17,9 +10,11 @@ import os, sys
 import pandas as pd
 import numpy as np
 import getpass
-from utils import connect_to_db_and_run_query, append_historic_output_to_csv, connect_to_db_and_push_df
+
 from IPython import embed
 from ggplot import *
+
+from utils import connect_to_db_and_run_query, append_historic_output_to_csv, connect_to_db_and_push_df
 
 coal_codes = ['ANT','BIT','LIG','SGC','SUB','WC','RC']
 outputs_directory = 'processed_data'
@@ -27,61 +22,37 @@ outputs_directory = 'processed_data'
 pd.options.mode.chained_assignment = None
 
 
-def pull_generation_projects_data():
-    print "Reading in current generation projects data from database..."
+def pull_generation_projects_data(gen_scenario_id):
+    """
+    Returns generation plant data for a specific existing and planned scenario id.
+    For now, only used to compare the old AMPL dataset with new heat rates.
+    """
+
+    print "Reading in existing and planned generation project data from database..."
     query = "SELECT * \
             FROM generation_plant JOIN generation_plant_existing_and_planned \
             USING (generation_plant_id) \
-            WHERE generation_plant_existing_and_planned_scenario_id = 1 "#AND full_load_heat_rate > 0"
+            WHERE generation_plant_existing_and_planned_scenario_id = {}".format(gen_scenario_id)
     db_gens = connect_to_db_and_run_query(query=query, database='switch_wecc')
-    print "======="year
-    print "Read in {} projects from the database, with {:.0f} GW of capacity".format(
-        len(db_gens), db_gens['capacity'].sum()/1000.0)
+    print "======="
+    print "Read in {} projects from the database for id {}, with {:.0f} GW of capacity".format(
+        len(db_gens), gen_scenario_id, db_gens['capacity'].sum()/1000.0)
     thermal_db_gens = db_gens[db_gens['full_load_heat_rate'] > 0]
     print "Weighted average of heat rate: {:.3f} MMBTU/MWh".format(
         thermal_db_gens['capacity'].dot(thermal_db_gens['full_load_heat_rate'])/thermal_db_gens['capacity'].sum())
     print "======="
+    
     return db_gens
 
-def explore_heat_rates():
-    db_gen_projects = pull_generation_projects_data().rename(columns={'name':'Plant Name', 'gen_tech':'Prime Mover'})
-    db_gen_projects.loc[:,'Prime Mover'].replace(
-        {
-        'Coal_Steam_Turbine':'ST',
-        'Gas_Steam_Turbine':'ST',
-        'Gas_Combustion_Turbine':'GT',
-        'Gas_Combustion_Turbine_Cogen':'GT',
-        'CCGT':'CC',
-        'DistillateFuelOil_Combustion_Turbine':'GT',
-        'DistillateFuelOil_Internal_Combustion_Engine':'IC',
-        'Geothermal':'ST',
-        'Gas_Internal_Combustion_Engine':'IC',
-        'Bio_Gas_Internal_Combustion_Engine':'IC',
-        'Bio_Gas_Steam_Turbine':'ST'
-        },
-        inplace=True)
-    eia_gen_projects = filter_projects_by_region_id(13)
 
-    df = pd.merge(db_gen_projects, eia_gen_projects,
-        on=['Plant Name','Prime Mover'], how='left').loc[:,[
-        'Plant Name','gen_tech','energy_source','full_load_heat_rate',
-        'Best Heat Rate','Prime Mover','Energy Source','Energy Source 2','Operating Year']]
-    df = df[df['full_load_heat_rate']>0]
-
-    print "\nPrinting intersection of DB and EIA generation projects that have a specified heat rate to heat_rate_comparison.tab"
-    
-    fpath = os.path.join('processed_data','heat_rate_comparison.tab')
-    with open(fpath, 'w') as outfile:
-        df.to_csv(outfile, sep='\t', header=True, index=False)
-
-    return df
-
-def filter_projects_by_region_id(region_id, year, host='localhost', area=0.5):
+def filter_plants_by_region_id(region_id, year, host='localhost', area=0.5):
     """
-    Filters generation project data by NERC Region and assigns Regions to rows
-    that do not have one, according to their County and State. Rows will get
-    assigned to a Region is more than a certain percentage of the area of the
-    county it belongs to intersects with the specified Region.
+    Filters generation plant data by NERC Region, according to the provided id.
+    Generation plants w/o Region get assigned to the NERC Region with which more
+    than a certain percentage of its County area intersects (by default, 50%).
+    A list is saved with Counties and States belonging to the specified Region.
+    Both County and State are necessary to correctly assign plants (some County
+    names exist in multiple States).
 
     Returns a DataFrame with the filtered data.
 
@@ -200,7 +171,84 @@ def filter_projects_by_region_id(region_id, year, host='localhost', area=0.5):
     return generators
 
 
+def compare_eia_heat_rates_to_ampl_projs(year):
+    """
+    Compares calculated 'Best Heat Rates' for EIA plants with full load heat
+    rates of previously stored Switch AMPL data (generation scenario id 1) in
+    the database.
+
+    ToDo: Only EIA860 data is merged with existing AMPL data, so no 'Best Heat
+    Rate' column is present. Need to also merge with EIA923 processed data
+    (historic_heat_rates_WIDE.tab file).
+    
+    Returns the comparison DataFrame and prints it to a tab file.
+    """
+
+    db_gen_projects = pull_generation_projects_data(gen_scenario_id=1).rename(
+        columns={'name':'Plant Name', 'gen_tech':'Prime Mover'})
+    db_gen_projects.loc[:,'Prime Mover'].replace(
+        {
+        'Coal_Steam_Turbine':'ST',
+        'Gas_Steam_Turbine':'ST',
+        'Gas_Combustion_Turbine':'GT',
+        'Gas_Combustion_Turbine_Cogen':'GT',
+        'CCGT':'CC',
+        'DistillateFuelOil_Combustion_Turbine':'GT',
+        'DistillateFuelOil_Internal_Combustion_Engine':'IC',
+        'Geothermal':'ST',
+        'Gas_Internal_Combustion_Engine':'IC',
+        'Bio_Gas_Internal_Combustion_Engine':'IC',
+        'Bio_Gas_Steam_Turbine':'ST'
+        },
+        inplace=True)
+    eia_gen_projects = filter_plants_by_region_id(13, year)
+
+    df = pd.merge(db_gen_projects, eia_gen_projects,
+        on=['Plant Name','Prime Mover'], how='left').loc[:,[
+        'Plant Name','gen_tech','energy_source','full_load_heat_rate',
+        'Best Heat Rate','Prime Mover','Energy Source','Energy Source 2','Operating Year']]
+    df = df[df['full_load_heat_rate']>0]
+
+    print "\nPrinting intersection of DB and EIA generation projects that have a specified heat rate to heat_rate_comparison.tab"
+    
+    fpath = os.path.join('processed_data','heat_rate_comparison.tab')
+    with open(fpath, 'w') as outfile:
+        df.to_csv(outfile, sep='\t', header=True, index=False)
+
+    return df
+
+
 def assign_heat_rates_to_projects(generators, year):
+    """
+    Assigns calculated heat rates based on EIA923 data to plants parsed from
+    EIA860 data. Receives a DataFrame with all generators and the year.
+
+    Coal plants with better heat rates than 8.607 MMBTU/MWh (still need to add
+    the reference to this best historic heat rate of 2015) and other thermal
+    plants with heat rate better (lower) than 6.711 MMBTU/MWh are ignored and get
+    assigned an average heat rate, since we assume a report error has taken place.
+
+    The top and bottom .5% of heat rates get replaced by the heat rate at the
+    top and bottom .5 percentile, respectively. This replaces unrealistic values
+    that must have been caused by reporting errors.
+
+    Heat rate averages used to replace unrealistic values and to be assigned to
+    projects without heat rate are calculated as the average heat rate of plants
+    with the same technology, energy source and vintage. A 4-year window is used
+    to identify plants with similar vintage. If less than 4 plants fall into this
+    window, it is enlarged successively. If no other project with the same
+    technology-energy source combination exists, then the technology's average
+    heat rate is used. The last two assignments (per technology-energy source-window
+    if other projects exist, and per technology is no other projects exist) are
+    applied to both existing projects without heat rate data and to new projects.
+
+    Heat rate distributions per technology and energy source are plotted and
+    printed to a PDF file in order to visually inspect them.
+
+    Returns the original DataFrame with a Best Heat Rate column.    
+
+    """
+
     fuels = {
         'LFG':'Bio_Gas',
         'OBG':'Bio_Gas',
@@ -349,7 +397,31 @@ def assign_heat_rates_to_projects(generators, year):
 
 
 def finish_project_processing(year):
-    generators = filter_projects_by_region_id(13, year)
+    """
+    Receives a year, and processes the scraped EIA data for that year by using
+    previously defined functions.
+
+    First, plants are read in from the generation_projects_YEAR.tab file, which
+    come from the EIA860 form, and filtered by region. For now, region 13 (WECC)
+    is hardcoded.
+
+    Second, plants are assigned heat rates from the historic_heat_rates_WIDE.tab
+    file, which come from the EIA923 form. Plants with missing heat rates are
+    assigned averages, and unrealistic heat rate values are replaced by reasonable
+    parameters.
+
+    Prints out 3 tab files with resulting data:
+        existing_generation_projects_YEAR.tab
+        new_generation_projects_YEAR.tab
+        uprates_to_generation_projects_YEAR.tab
+
+    These files are later post-processed and pushed into the Switch-WECC database
+    of RAEL (UC Berkeley), though data is formatted in a general-purpose manner,
+    so it could be used for any other purpose.
+
+    """
+
+    generators = filter_plants_by_region_id(13, year)
     generators = assign_heat_rates_to_projects(generators, year)
     existing_gens = generators[generators['Operational Status']=='Operable']
     proposed_gens = generators[generators['Operational Status']=='Proposed']
@@ -385,6 +457,91 @@ def finish_project_processing(year):
 
 
 def upload_generation_projects(year):
+    """
+    Reads existing and new project data previously processed from the EIA forms
+    in order to upload it to the Switch-WECC database of RAEL, at UC Berkeley.
+
+    First, generation project data is read in from the processed tab files.
+
+    Projects using Electricity or Purchased Steam as their energy source are
+    dropped from the generator set.
+
+    Projects using Other as their energy source are assigned Gas as default.
+
+    Capacity limits are set as total existing and projected capacity for each
+    project (e.g. no additional capacity additions will be allowed for
+    predetermined projects in Switch).
+
+    Plant-level heat rates are calculated by doing a capacity-weighted average
+    over the individual heat rates of each unit in the plant that have the same
+    technology and use the same energy source. This allows obtaining a single
+    heat rate for plants with units that have different vintages.
+
+    Baseload flags are set for all plants that use Nuclear, Coal, or Geothermal
+    as their energy source.
+
+    Variable flags are set for all plants that use Hydro, Photovoltaic, or Wind
+    Turbine technologies.
+
+    Cogen flags are set for all plants that declared being Cogen.
+
+    Columns are renamed to match the PSQL database column definitions.
+
+    Resulting generation plant data is uploaded to the database with generation
+    plant scenario id 2. A subsequent aggregated set per technology, energy source,
+    and load zone is uploaded with id 3.
+    
+    WARNING: The upload process will clean the database from all previous projects
+    with ids 2 and 3. This includes:
+        Hydro capacity factors
+        Plant cost
+        Plant build years
+        Plant scenario members
+        Plant level data
+        But not variable capacity factor data (that was uploaded after finishing
+            this part of the code, so its still in the todo list).
+    
+    After uploading generation plant data, the geom column is populated with
+    the geometric object representing the location of the project, for those
+    projects with latitude and longitude defined.
+
+    Then, plants are assigned to load zones:
+        Plants with geom data are assgined to zones into which their location
+        falls in.
+        Plants without lat and long data are assigned to the load zone in which
+        their County's centroid falls in.
+        Plants with coordinates out of the WECC region (only a few) are assigned
+        to the closest WECC load zone if they are within a 100 mile radius from
+        its boundary. Otherwise, they are dropped from the data set (for now,
+        only a couple of cases in the East Coast, which must have a reporting
+        mistake).
+
+    Maximum age, outage rates, and variable O&M costs are assigned as
+    technology-default values.
+
+    The Diablo Canyon nuclear power plant is set a maximum age of 40 years.
+
+    Uploaded plants are assigned to generation plant scenario id 2.
+
+    The uploaded generation plant ids are recovered, so that build year data
+    can be uploaded for existing and new projects.
+
+    Fixed and investment costs are assigned a default value of 0 to all plants.
+
+    Hydro capacity factors are uploaded for each hydro plant, according to
+    nameplate capacity. Minimum flows are set to a default of 0.5 times the
+    average flow. The hydro scenario id is set to 2.
+
+    The plant dataset is then aggregated by technology, energy source, and load
+    zone, considering heat rate windows of 1 MMBTU/MWh (so that plants with
+    significantly different heat rates are not lumped in together). Heat rates
+    are averaged by weighting the capacity of each plant. Other properties,
+    such as capacity limit, are simply summed.
+
+    The dataset is uploaded with id 3, and build years, hydro capacity factors,
+    and all other data is processed in the same way as for id 2.   
+
+    """
 
     user = getpass.getpass('Enter username for the database:')
     password = getpass.getpass('Enter database password for user {}:'.format(user))
@@ -427,7 +584,7 @@ def upload_generation_projects(year):
     generators.replace({'Energy Source':{'Other':'Gas'}}, inplace=True)
 
 
-    def wavg(group, avg_name, weight_name):
+    def weighted_avg(group, avg_name, weight_name):
         """
         http://stackoverflow.com/questions/10951341/pandas-dataframe-aggregate-function-using-multiple-columns
         """
@@ -441,8 +598,8 @@ def upload_generation_projects(year):
     index_cols = ['EIA Plant Code','Prime Mover','Energy Source']
     print "Calculating capacity-weighted average heat rates per plant, technology and energy source..."
     generators = pd.merge(generators,
-        pd.DataFrame(generators.groupby(index_cols).apply(wavg,'Best Heat Rate',
-            'Nameplate Capacity (MW)')).reset_index().replace(0,float('nan')),
+        pd.DataFrame(generators.groupby(index_cols).apply(weighted_avg, 'Best Heat Rate',
+            'Nameplate Capacity (MW)')).reset_index().replace(0, float('nan')),
         how='right',
         on=index_cols).drop('Best Heat Rate', axis=1)
 
@@ -479,12 +636,12 @@ def upload_generation_projects(year):
         'all projects currently in the generation_plant table that are'
         'not present in the generation_plant_scenario_member table will be'
         'removed. Continue? [y/n]')
-    if carry_on not in ['y','n']:
+    while carry_on not in ['y','n']:
         carry_on = getpass.getpass('WARNING: In order to push projects into the DB,'
         'all projects currently in the generation_plant table that are'
         'not present in the generation_plant_scenario_member table will be'
         'removed. Continue? [y/n]')
-    elif carry_on == 'n':
+    if carry_on == 'n':
         sys.exit()
 
     print "\n-----------------------------"
@@ -882,6 +1039,26 @@ def upload_generation_projects(year):
 
 
 def assign_var_cap_factors():
+    """
+    Variable capacity factors are assigned to all plants with WT and PV
+    technology.
+
+    Capacity factors are calculated as the average for all plants from the old
+    AMPL dataset for each load zone. These load zone profiles are then assigned
+    to all new EIA projects located there.
+
+    I later realized that several load zones had some missing PV capacity factors
+    for the first hours of each year. So, I set all capacity factors between
+    00:00 and 08:00 to 0. Then, I noticed that the missing capacity factors
+    were actually caused because all the dataset was shifted 7 hours ahead from
+    the new timepoint definitions. So, this is later corrected by shifting all
+    new capacity factors 7 hours earlier.
+
+    All these processes take significant time, so it is recommended to run
+    this script through a sturdy SSH tunnel.
+
+    """
+
     user = getpass.getpass('Enter username for the database:')
     password = getpass.getpass('Enter database password for user {}:'.format(user))
     print "\nWill assign variable capacity factors for WIND projects"
@@ -970,6 +1147,24 @@ def assign_var_cap_factors():
 
 
 def others():
+    """
+    Miscellaneous processing to finish preparing the EIA dataset for Switch runs.
+
+    Fuell cell technologies are dropped from the dataset, because heat rates
+    were mistakenly not calculated (though only amount to 60 MW).
+
+    Other (OT) technologies were assigned a default gas energy source, but were
+    not calculated heat rates, so their are assigned the average heat rate for
+    gas plants (OT only amounts to around 40 MW).
+
+    Nan hydro capacity factors are replaced by 0.01.
+
+    Nan generation plant parameters are replaced by Nulls.
+
+    Null connection cost parameters are replaced by 0.
+
+    """
+
     # Fuel cells ('FC') were not calculated and assigned heat rates
     # These sum up to 63 MW of capacity in WECC
     # Cleanest option is to remove them from the current runs:
