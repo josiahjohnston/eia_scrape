@@ -616,7 +616,10 @@ def upload_generation_projects(year):
         ['Nuclear','Coal','Geothermal']),True,False)
     generators.loc[:,'is_variable'] = np.where(generators['Prime Mover'].isin(
         ['HY','PV','WT']),True,False)
-    generators.loc[:,'is_cogen'] = np.where(generators['Cogen'] == 'Y',True,False)
+    if 'Cogen' not in generators.columns:
+        generators.loc[:,'is_cogen'] = False
+    else:
+        generators.loc[:,'is_cogen'] = np.where(generators['Cogen'] == 'Y',True,False)
 
     database_column_renaming_dict = {
         'EIA Plant Code':'eia_plant_code',
@@ -873,6 +876,7 @@ def upload_generation_projects(year):
     hydro_cf.loc[:,'hydro_simple_scenario_id'] = gen_scenario_id
     hydro_cf = hydro_cf[['hydro_simple_scenario_id','generation_plant_id',
         'year','month','hydro_min_flow_mw','hydro_avg_flow_mw']]
+    hydro_cf = hydro_cf.fillna(0.01)
 
     connect_to_db_and_push_df(df=hydro_cf,
         col_formats="(%s,%s,%s,%s,%s,%s)", table='hydro_historical_monthly_capacity_factors',
@@ -1031,6 +1035,7 @@ def upload_generation_projects(year):
         on=['load_zone_id', 'gen_tech'], how='inner', suffixes=('','_y'))
     agg_hydro_cf = agg_hydro_cf[['hydro_simple_scenario_id','generation_plant_id','year','month',
         'hydro_min_flow_mw','hydro_avg_flow_mw']]
+    agg_hydro_cf = agg_hydro_cf.fillna(0.01)    
 
     connect_to_db_and_push_df(df=agg_hydro_cf,
         col_formats="(%s,%s,%s,%s,%s,%s)", table='hydro_historical_monthly_capacity_factors',
@@ -1192,18 +1197,6 @@ def others():
         where energy_source = 'Gas'\
         and generation_plant_scenario_id = 2)\
         where gen_tech = 'OT' and energy_source = 'Gas'"
-    connect_to_db_and_run_query(query,
-            database='switch_wecc', user=user, password=password, quiet=True)
-
-    # A handful of hydro capacity factors were inputted as 'NaN's
-    query = "UPDATE hydro_historical_monthly_capacity_factors\
-        set hydro_min_flow_mw = 0.01\
-        where hydro_simple_scenario_id = 2\
-        and hydro_min_flow_mw = 'NaN';\
-        UPDATE hydro_historical_monthly_capacity_factors\
-        set hydro_avg_flow_mw = 0.01\
-        where hydro_simple_scenario_id = 2\
-        and hydro_avg_flow_mw = 'NaN';"
     connect_to_db_and_run_query(query,
             database='switch_wecc', user=user, password=password, quiet=True)
 
